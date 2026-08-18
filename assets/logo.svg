@@ -1,0 +1,8 @@
+<svg width="420" height="100" viewBox="0 0 420 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs><linearGradient id="g" x1="8" y1="6" x2="90" y2="94" gradientUnits="userSpaceOnUse"><stop stop-color="#20D7B4"/><stop offset="1" stop-color="#3178F6"/></linearGradient></defs>
+  <path d="M50 5L89 20V48C89 72 72 90 50 97C28 90 11 72 11 48V20L50 5Z" fill="url(#g)"/>
+  <path d="M26 49C32 37 40 31 50 31C60 31 68 37 74 49C68 61 60 67 50 67C40 67 32 61 26 49Z" fill="#07111F"/>
+  <circle cx="50" cy="49" r="10" fill="#E9FFFA"/><circle cx="50" cy="49" r="5" fill="#20D7B4"/>
+  <text x="108" y="45" fill="#E7EEF8" font-family="Inter,Arial,sans-serif" font-size="30" font-weight="800" letter-spacing="-1">VisionGuard AI</text>
+  <text x="109" y="70" fill="#8FA4BC" font-family="Inter,Arial,sans-serif" font-size="14" letter-spacing="1.6">SEE. IDENTIFY. PROTECT.</text>
+</svg>

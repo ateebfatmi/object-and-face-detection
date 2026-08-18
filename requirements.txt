@@ -1,0 +1,15 @@
+streamlit>=1.42,<2
+streamlit-webrtc>=0.47.9,<1
+ultralytics>=8.3,<9
+opencv-contrib-python-headless>=4.10,<5
+numpy>=1.26,<3
+pandas>=2.2,<3
+plotly>=5.24,<7
+Pillow>=10.4,<12
+SQLAlchemy>=2.0,<3
+av>=16,<17
+ftfy>=6.3,<7
+regex>=2025.7
+tqdm>=4.67,<5
+lap>=0.5.12,<1
+clip @ git+https://github.com/ultralytics/CLIP.git@488e81a6711eea7346872b46ea928b367da8889d

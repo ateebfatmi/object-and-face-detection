@@ -12,7 +12,7 @@ from .object_detector import ObjectDetector
 from .processor import VisionProcessor
 
 
-OBJECT_DETECTOR_REVISION = "objects365-diverse-detector-v13"
+OBJECT_DETECTOR_REVISION = "supervised-key-specialist-v14"
 
 
 COMPACT_NAVIGATION = (
@@ -96,7 +96,11 @@ def get_processor(objects: bool = True, faces: bool = True, object_mode: str = "
 
 
 def hero(title: str, subtitle: str) -> None:
-    st.markdown(f'<div class="hero"><div class="eyebrow">VISIONGUARD AI</div><h1>{title}</h1><p>{subtitle}</p></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="hero"><div class="eyebrow">VISIONGUARD · INTELLIGENCE STUDIO</div>'
+        f'<h1>{title}</h1><p>{subtitle}</p></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def metric_cards(items: list[tuple[str, str | int, str]]) -> None:

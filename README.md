@@ -8,7 +8,7 @@ VisionGuard combines Ultralytics YOLO, ByteTrack, OpenCV YuNet/SFace, Streamlit,
 
 - Real-time browser-webcam detection through WebRTC
 - YOLO11 detection across all 80 COCO classes plus a fine-tuned daily-object model and targeted YOLO-World verification
-- Daily-use coverage for backpacks, bats, bottles, fans, cups, headphones, laptops, phones, pens, and watches
+- Daily-use coverage for backpacks, bats, bottles, fans, cups, headphones, keys, laptops, phones, pens, and watches
 - Optional Diverse mode with an Objects365 checkpoint pretrained on 1.74 million images across 365 classes
 - Persistent ByteTrack IDs for moving objects
 - Dedicated YuNet face detection independent of person boxes
@@ -68,7 +68,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open `http://localhost:8501`. VisionGuard requires the selected YOLO weights to exist in `models/` and will never silently substitute another standard model. The expected files are `yolo11n.pt`, `yolo11s.pt`, and (for Extended mode) `yolov8s-worldv2.pt`. Extended mode also loads `daily_objects.pt` when the locally trained checkpoint is present. Diverse mode uses the official `yolo26s-objv1-150.pt` Objects365 checkpoint plus the same specialist passes. Obtain base checkpoints only from the official Ultralytics release mechanism. YuNet and SFace are downloaded from the official OpenCV Zoo if absent. All inference is local after setup.
+Open `http://localhost:8501`. VisionGuard requires the selected YOLO weights to exist in `models/` and will never silently substitute another standard model. The expected files are `yolo11n.pt`, `yolo11s.pt`, and (for Extended mode) `yolov8s-worldv2.pt`. Extended mode also loads `daily_objects.pt` and the hard-negative-trained `key_objects.pt` when those local checkpoints are present. Diverse mode uses the official `yolo26s-objv1-150.pt` Objects365 checkpoint plus the same specialist passes. Obtain base checkpoints only from the official Ultralytics release mechanism. YuNet and SFace are downloaded from the official OpenCV Zoo if absent. All inference is local after setup.
 
 ## Using VisionGuard
 
@@ -123,6 +123,7 @@ visionguard-ai/
 ├── docs/TECHNICAL_AUDIT.md
 ├── evaluation/{README.md,dataset.example.yaml}
 ├── scripts/evaluate_object_detection.py
+├── scripts/augment_daily_objects_lvis_keys.py
 ├── scripts/prepare_openimages_daily_objects.py
 ├── scripts/train_daily_objects.py
 ├── data/{known_faces,unknown_faces,screenshots,uploads,processed}/
@@ -143,7 +144,7 @@ SQLAlchemy creates the SQLite file and tables automatically. Queries are paramet
 
 ## How detection works
 
-YOLO11 detects COCO objects and can pass detections to ByteTrack, whose IDs persist across adjacent frames. In Extended mode, a fine-tuned ten-class YOLO model supplies conservative daily-object evidence and a separate tiled YOLO-World pass searches for targeted open-vocabulary objects. Diverse mode replaces the 80-class primary pass with an official 365-class Objects365 model pretrained on 1.74 million images. Events are stored with their actual detector source, and class-aware fusion removes overlapping lower-quality guesses. YuNet separately locates faces and five landmarks. SFace aligns each face, creates a feature vector, and compares it with averaged registered vectors using cosine similarity. The pipeline annotates the frame, applies evidence cooldowns, and returns structured events for SQLite logging.
+YOLO11 detects COCO objects and can pass detections to ByteTrack, whose IDs persist across adjacent frames. In Extended mode, a fine-tuned ten-class YOLO model supplies conservative daily-object evidence, a one-class detector trained with pen/bottle hard negatives handles keys, and a separate tiled YOLO-World pass searches for targeted open-vocabulary objects. Diverse mode replaces the 80-class primary pass with an official 365-class Objects365 model pretrained on 1.74 million images. Events are stored with their actual detector source, and class-aware fusion removes overlapping lower-quality guesses. YuNet separately locates faces and five landmarks. SFace aligns each face, creates a feature vector, and compares it with averaged registered vectors using cosine similarity. The pipeline annotates the frame, applies evidence cooldowns, and returns structured events for SQLite logging.
 
 Standard YOLO11 COCO weights do **not** contain pen, earbuds, headphones, or wristwatch classes. Confidence changes cannot add missing categories. Accurate and Fast modes therefore report only the labels actually produced by their COCO model. Use Extended mode for the custom daily-object checkpoint and open-vocabulary pass.
 
@@ -153,10 +154,17 @@ The dataset builder downloads licensed Open Images annotations and images, keeps
 
 ```bash
 .venv/bin/python scripts/prepare_openimages_daily_objects.py --images-per-class 60
+.venv/bin/python scripts/augment_daily_objects_lvis_keys.py
 .venv/bin/python scripts/train_daily_objects.py --epochs 20 --imgsz 512 --batch 8
+.venv/bin/python scripts/train_daily_objects.py --data data/lvis_keys/dataset.yaml --model models/yolo11n.pt --output models/key_objects.pt --epochs 40 --imgsz 512 --batch 8 --optimizer AdamW --lr0 0.0005 --freeze 10 --warmup-epochs 1
 ```
 
-The current 598-image run reached `0.649` mAP@0.50 and `0.493` mAP@0.50:0.95 on its untouched 90-image Open Images test split. This is a reproducible benchmark, not a guarantee of error-free webcam detection; room-specific labeled images are still the best next step for domain adaptation.
+The augmentation step builds a separate supervised `key` dataset from official LVIS v1
+annotations, keeps COCO source images separated across train/validation/test splits, adds
+pen/bottle hard negatives, and records provenance locally. A separate checkpoint prevents
+key training from degrading the established daily-object classes.
+
+The ten-class daily-object run reached `0.649` mAP@0.50 and `0.493` mAP@0.50:0.95 on its untouched 90-image Open Images test split. The isolated key specialist reached `0.374` mAP@0.50 and `0.237` mAP@0.50:0.95 on its 43-image validation split; its smaller 36-image test split reached `0.087` mAP@0.50 at the selected 0.20 confidence gate. These are reproducible benchmarks, not a guarantee of error-free webcam detection; room-specific labeled images are still the best next step for domain adaptation.
 
 ## Performance notes
 

@@ -13,6 +13,7 @@ from .config import (
     BYTETRACK_CONFIG,
     BYTETRACK_EXPERIMENTAL_CONFIG,
     DAILY_OBJECTS_MODEL,
+    KEY_OBJECT_MODEL,
     OBJECTS365_MODEL,
     YOLO11N_MODEL,
     YOLO11S_MODEL,
@@ -38,7 +39,13 @@ CUSTOM_PROMPTS = (
 )
 ACCESSORY_PROMPTS = ("long thin pen", "earbuds", "headphones")
 BACKPACK_VERIFY_PROMPTS = ("backpack", "hanging clothes")
-WATCH_VERIFY_PROMPTS = ("bottle", "analog wristwatch")
+WATCH_VERIFY_PROMPTS = (
+    "bottle",
+    "water bottle",
+    "analog wristwatch",
+    "wrist watch",
+    "handheld wristwatch",
+)
 CUSTOM_LABELS = {
     "bottle": "bottle",
     "water bottle": "bottle",
@@ -55,6 +62,9 @@ CUSTOM_LABELS = {
     "mobile phone": "cell phone",
     "coffee cup": "cup",
     "pen/pencil": "pen",
+    "analog wristwatch": "watch",
+    "wrist watch": "watch",
+    "handheld wristwatch": "watch",
 }
 
 DAILY_MODEL_CLASSES = (
@@ -75,6 +85,7 @@ DAILY_THRESHOLDS = {
     "pen": 0.12,
     "watch": 0.25,
 }
+KEY_MODEL_THRESHOLD = 0.20
 
 # These are common COCO-only guesses for objects that the targeted World pass
 # can describe more precisely. Suppression only happens when the boxes overlap
@@ -122,6 +133,7 @@ class ObjectDetector:
 
         self.custom_model = None
         self.daily_model = None
+        self.key_model = None
         if mode in {"hybrid", "diverse"}:
             self._require_file(YOLO_WORLD_MODEL, "YOLO-World weights")
             self._require_file(BYTETRACK_EXPERIMENTAL_CONFIG, "experimental ByteTrack configuration")
@@ -130,6 +142,9 @@ class ObjectDetector:
             if DAILY_OBJECTS_MODEL.is_file() and DAILY_OBJECTS_MODEL.stat().st_size > 0:
                 self.daily_model = YOLO(str(DAILY_OBJECTS_MODEL))
                 self._validate_daily_model()
+            if KEY_OBJECT_MODEL.is_file() and KEY_OBJECT_MODEL.stat().st_size > 0:
+                self.key_model = YOLO(str(KEY_OBJECT_MODEL))
+                self._validate_key_model()
 
         self.mode = mode
         self.model_path = model_path
@@ -156,7 +171,14 @@ class ObjectDetector:
     def _validate_daily_model(self) -> None:
         names = tuple(str(self.daily_model.names[index]).strip().lower() for index in range(10))
         if self.daily_model.task != "detect" or names != DAILY_MODEL_CLASSES:
-            raise RuntimeError("daily_objects.pt does not contain the expected ten daily-use classes.")
+            raise RuntimeError(
+                "daily_objects.pt does not contain the expected daily-use classes."
+            )
+
+    def _validate_key_model(self) -> None:
+        names = tuple(str(value).strip().lower() for value in self.key_model.names.values())
+        if self.key_model.task != "detect" or names != ("key",):
+            raise RuntimeError("key_objects.pt is not the expected one-class key detector.")
 
     @staticmethod
     def _validate_frame(frame: np.ndarray) -> None:
@@ -229,6 +251,24 @@ class ObjectDetector:
                 )
                 daily = self._postprocess_daily(daily, frame.shape[:2])
 
+            supervised_keys: list[ObjectDetection] = []
+            if self.key_model is not None:
+                key_result = self.key_model.predict(
+                    source=frame,
+                    conf=0.05,
+                    imgsz=768,
+                    iou=iou_threshold,
+                    max_det=min(max_detections, 30),
+                    verbose=False,
+                )
+                supervised_keys = self._parse(
+                    key_result,
+                    self.key_model,
+                    frame.shape[:2],
+                    detector_source="key_yolo",
+                )
+                supervised_keys = self._postprocess_keys(supervised_keys)
+
             custom_kwargs = {
                 "conf": custom_confidence,
                 "imgsz": 960,
@@ -296,7 +336,12 @@ class ObjectDetector:
                     ))
             custom = self._replace_bottles_verified_as_watches(frame, custom)
             custom = self._postprocess_custom(custom, frame.shape[:2])
-            return self._fuse(standard, daily + custom)
+            # Once the supervised specialist is available, do not surface the
+            # much noisier open-vocabulary key guesses. The specialist was
+            # explicitly trained against pen and bottle hard negatives.
+            if self.key_model is not None:
+                custom = [item for item in custom if item.name != "key"]
+            return self._fuse(standard, daily + supervised_keys + custom)
 
     @staticmethod
     def _postprocess_daily(
@@ -324,55 +369,82 @@ class ObjectDetector:
             kept.append(item)
         return kept
 
+    @staticmethod
+    def _postprocess_keys(detections: list[ObjectDetection]) -> list[ObjectDetection]:
+        """Use the held-out hard-negative operating point for key boxes."""
+        kept: list[ObjectDetection] = []
+        for item in detections:
+            x1, y1, x2, y2 = item.box
+            width, height = max(x2 - x1, 1), max(y2 - y1, 1)
+            elongation = max(width, height) / min(width, height)
+            if item.confidence >= KEY_MODEL_THRESHOLD and elongation >= 1.35:
+                kept.append(item)
+        return kept
+
     def _replace_bottles_verified_as_watches(
         self, frame: np.ndarray, detections: list[ObjectDetection]
     ) -> list[ObjectDetection]:
-        """Disambiguate bottle/key candidates from watches using a focused prompt pair."""
+        """Disambiguate bottle/key candidates using a close-up prompt ensemble.
+
+        Watches are small in a webcam frame, so verifying against the complete
+        scene repeats the same scale problem that caused the original bottle
+        guess.  Each candidate is cropped with context, enlarged by inference,
+        and compared against several equivalent watch descriptions.
+        """
         candidates = [item for item in detections if item.name in {"bottle", "key"}]
         if not candidates or self.custom_model is None:
             return detections
 
+        replacements: dict[int, ObjectDetection] = {}
+        frame_height, frame_width = frame.shape[:2]
         self.custom_model.set_classes(list(WATCH_VERIFY_PROMPTS))
         try:
-            result = self.custom_model.predict(
-                source=frame,
-                conf=0.005,
-                imgsz=960,
-                iou=0.50,
-                max_det=50,
-                verbose=False,
-            )
-            verified = self._parse(
-                result,
-                self.custom_model,
-                frame.shape[:2],
-                detector_source="yolo_world",
-            )
+            for candidate in candidates:
+                x1, y1, x2, y2 = candidate.box
+                pad_x = max(int((x2 - x1) * 0.35), 8)
+                pad_y = max(int((y2 - y1) * 0.25), 8)
+                crop_x1, crop_y1 = max(0, x1 - pad_x), max(0, y1 - pad_y)
+                crop_x2, crop_y2 = min(frame_width, x2 + pad_x), min(frame_height, y2 + pad_y)
+                crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                if crop.size == 0:
+                    continue
+                result = self.custom_model.predict(
+                    source=crop,
+                    conf=0.005,
+                    imgsz=640,
+                    iou=0.50,
+                    max_det=20,
+                    verbose=False,
+                )
+                verified = self._parse(
+                    result,
+                    self.custom_model,
+                    crop.shape[:2],
+                    detector_source="yolo_world",
+                )
+                verified = self._offset_detections(verified, crop_x1, crop_y1)
+                nearby = [
+                    item for item in verified
+                    if ObjectDetector._overlap(item.box, candidate.box) >= 0.35
+                ]
+                bottle_score = max(
+                    (item.confidence for item in nearby if item.name == "bottle"),
+                    default=0.0,
+                )
+                watches = [item for item in nearby if item.name == "watch"]
+                if not watches:
+                    continue
+                watch = max(watches, key=lambda item: item.confidence)
+                if self._watch_evidence_wins(bottle_score, watch.confidence):
+                    replacements[id(candidate)] = ObjectDetection(
+                        candidate.box,
+                        "watch",
+                        watch.confidence,
+                        candidate.tracking_id,
+                        "yolo_world",
+                    )
         finally:
             self.custom_model.set_classes(list(CUSTOM_PROMPTS))
-
-        replacements: dict[int, ObjectDetection] = {}
-        for candidate in candidates:
-            nearby = [
-                item for item in verified
-                if ObjectDetector._overlap(item.box, candidate.box) >= 0.50
-            ]
-            bottle_score = max(
-                (item.confidence for item in nearby if item.name == "bottle"),
-                default=0.0,
-            )
-            watches = [item for item in nearby if item.name == "analog wristwatch"]
-            if not watches:
-                continue
-            watch = max(watches, key=lambda item: item.confidence)
-            if self._watch_evidence_wins(bottle_score, watch.confidence):
-                replacements[id(candidate)] = ObjectDetection(
-                    watch.box,
-                    "watch",
-                    watch.confidence,
-                    candidate.tracking_id,
-                    "yolo_world",
-                )
         return [replacements.get(id(item), item) for item in detections]
 
     @staticmethod
@@ -486,7 +558,7 @@ class ObjectDetector:
     def reset_tracking(self) -> None:
         """Reset persistent ByteTrack state before a new camera/video source."""
         with self.lock:
-            for model in (self.model, self.custom_model, self.daily_model):
+            for model in (self.model, self.custom_model, self.daily_model, self.key_model):
                 predictor = getattr(model, "predictor", None) if model is not None else None
                 trackers = getattr(predictor, "trackers", ()) or ()
                 for tracker in trackers:
@@ -681,6 +753,25 @@ class ObjectDetector:
             )
         )]
 
+        # The supervised daily-object model was trained with an explicit
+        # watch class.  Its watch prediction is therefore more specific than
+        # a YOLO-World bottle guess on the same physical object.  Resolve this
+        # conflict before bottle/fan regions suppress other custom detections.
+        specialist_watches = [
+            item for item in custom_kept
+            if item.name == "watch"
+            and item.detector_source == "daily_yolo"
+            and item.confidence >= DAILY_THRESHOLDS["watch"]
+        ]
+        custom_kept = [candidate for candidate in custom_kept if not (
+            candidate.name == "bottle"
+            and candidate.detector_source == "yolo_world"
+            and any(
+                ObjectDetector._overlap(candidate.box, watch.box) >= 0.50
+                for watch in specialist_watches
+            )
+        )]
+
         targeted_regions = [item for item in custom_kept if item.name in {"bottle", "fan"}]
         custom_kept = [item for item in custom_kept if (
             item.name in {"bottle", "fan"}
@@ -726,6 +817,8 @@ class ObjectDetector:
                 color = (255, 190, 70)
             elif item.detector_source == "daily_yolo":
                 color = (210, 90, 255)
+            elif item.detector_source == "key_yolo":
+                color = (255, 130, 70)
             elif item.detector_source == "objects365":
                 color = (180, 150, 40)
             else:
@@ -734,6 +827,7 @@ class ObjectDetector:
             source = (
                 " · WORLD" if item.detector_source == "yolo_world"
                 else " · DAILY" if item.detector_source == "daily_yolo"
+                else " · KEY" if item.detector_source == "key_yolo"
                 else " · 365" if item.detector_source == "objects365"
                 else ""
             )

@@ -32,4 +32,4 @@ Demo Safe Mode displays people and face boxes immediately. Other object labels m
 
 ## Honest limitation
 
-The local `daily_objects.pt` checkpoint was fine-tuned on a 598-image Open Images subset and evaluated on an untouched 90-image split (`0.649` mAP@0.50; `0.493` mAP@0.50:0.95). Do not describe this as zero error. For the most reliable demo, add labeled examples from the intended webcam, room, lighting, poses, and exact objects before another training run.
+The local `daily_objects.pt` checkpoint was fine-tuned on a 598-image Open Images subset and evaluated on an untouched 90-image split (`0.649` mAP@0.50; `0.493` mAP@0.50:0.95). A separate `key_objects.pt` specialist uses LVIS key annotations plus pen/bottle hard negatives so key learning cannot degrade the daily model. Do not describe either model as zero error. For the most reliable demo, add labeled examples from the intended webcam, room, lighting, poses, and exact objects before another training run.

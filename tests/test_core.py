@@ -202,7 +202,10 @@ class CoreTests(unittest.TestCase):
         self.assertIn("car key with black keychain", CUSTOM_PROMPTS)
         self.assertEqual(ACCESSORY_PROMPTS, ("long thin pen", "earbuds", "headphones"))
         self.assertEqual(BACKPACK_VERIFY_PROMPTS, ("backpack", "hanging clothes"))
-        self.assertEqual(WATCH_VERIFY_PROMPTS, ("bottle", "analog wristwatch"))
+        self.assertEqual(WATCH_VERIFY_PROMPTS, (
+            "bottle", "water bottle", "analog wristwatch", "wrist watch",
+            "handheld wristwatch",
+        ))
 
     def test_backpack_suppression_requires_clear_clothing_evidence(self) -> None:
         self.assertTrue(ObjectDetector._clothing_evidence_wins(.0, .0286))
@@ -256,6 +259,33 @@ class CoreTests(unittest.TestCase):
         ]
         kept = ObjectDetector._postprocess_custom(detections, (720, 1280))
         self.assertEqual([item.confidence for item in kept], [.07, .12])
+
+    def test_supervised_key_overrides_open_vocabulary_confusions(self) -> None:
+        standard = [ObjectDetection((0, 0, 80, 300), "bottle", .56)]
+        specialist = [ObjectDetection((0, 0, 80, 300), "key", .21, detector_source="key_yolo")]
+        fused = ObjectDetector._fuse(standard, specialist)
+        self.assertEqual([(item.name, item.detector_source) for item in fused], [("key", "key_yolo")])
+
+    def test_daily_watch_overrides_world_bottle_on_same_object(self) -> None:
+        standard = [ObjectDetection((0, 0, 900, 900), "person", .90)]
+        custom = [
+            ObjectDetection((100, 100, 210, 340), "bottle", .22, detector_source="yolo_world"),
+            ObjectDetection((105, 105, 215, 345), "watch", .31, detector_source="daily_yolo"),
+        ]
+        fused = ObjectDetector._fuse(standard, custom)
+        self.assertEqual(
+            [(item.name, item.detector_source) for item in fused],
+            [("person", "yolo11"), ("watch", "daily_yolo")],
+        )
+
+    def test_key_specialist_rejects_square_hard_negative_boxes(self) -> None:
+        detections = [
+            ObjectDetection((0, 0, 100, 110), "key", .60, detector_source="key_yolo"),
+            ObjectDetection((0, 0, 80, 230), "key", .21, detector_source="key_yolo"),
+            ObjectDetection((0, 0, 80, 230), "key", .19, detector_source="key_yolo"),
+        ]
+        kept = ObjectDetector._postprocess_keys(detections)
+        self.assertEqual([(item.confidence, item.box) for item in kept], [(.21, (0, 0, 80, 230))])
 
     def test_focus_candidates_only_select_plausible_coco_confusions(self) -> None:
         detections = [
@@ -356,6 +386,8 @@ class CoreTests(unittest.TestCase):
                 loaded.append(str(path))
                 if str(path).endswith("daily_objects.pt"):
                     self.names = dict(enumerate(DAILY_MODEL_CLASSES))
+                elif str(path).endswith("key_objects.pt"):
+                    self.names = {0: "key"}
                 elif str(path).endswith("yolo26s-objv1-150.pt"):
                     self.names = {index: "person" if index == 0 else f"object-{index}" for index in range(365)}
                 else:
@@ -376,11 +408,13 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(diverse.inference_size, 768)
             self.assertEqual(tuple(hybrid.custom_model.names.values()), CUSTOM_PROMPTS)
             self.assertEqual(tuple(hybrid.daily_model.names.values()), DAILY_MODEL_CLASSES)
+            self.assertEqual(tuple(hybrid.key_model.names.values()), ("key",))
             with self.assertRaises(ValueError):
                 ObjectDetector("typo")
         self.assertTrue(any(path.endswith("yolo11n.pt") for path in loaded))
         self.assertTrue(any(path.endswith("yolov8s-worldv2.pt") for path in loaded))
         self.assertTrue(any(path.endswith("daily_objects.pt") for path in loaded))
+        self.assertTrue(any(path.endswith("key_objects.pt") for path in loaded))
         self.assertTrue(any(path.endswith("yolo26s-objv1-150.pt") for path in loaded))
 
     def test_tracking_reset_resets_each_model_tracker(self) -> None:
@@ -400,6 +434,7 @@ class CoreTests(unittest.TestCase):
             predictor=types.SimpleNamespace(trackers=[custom_tracker], vid_path=["old"])
         )
         detector.daily_model = None
+        detector.key_model = None
         detector.reset_tracking()
         self.assertEqual((standard_tracker.resets, custom_tracker.resets), (1, 1))
         self.assertEqual(detector.model.predictor.vid_path, [None])

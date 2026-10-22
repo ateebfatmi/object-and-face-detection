@@ -19,6 +19,7 @@ YOLO11S_MODEL = MODELS_DIR / "yolo11s.pt"
 YOLO_WORLD_MODEL = MODELS_DIR / "yolov8s-worldv2.pt"
 OBJECTS365_MODEL = MODELS_DIR / "yolo26s-objv1-150.pt"
 DAILY_OBJECTS_MODEL = MODELS_DIR / "daily_objects.pt"
+KEY_OBJECT_MODEL = MODELS_DIR / "key_objects.pt"
 BYTETRACK_CONFIG = MODELS_DIR / "bytetrack.yaml"
 BYTETRACK_EXPERIMENTAL_CONFIG = MODELS_DIR / "bytetrack_extended.yaml"
 

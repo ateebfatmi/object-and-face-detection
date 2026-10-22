@@ -42,7 +42,7 @@ with left:
         st.info("Run a detection session to populate object analytics.")
     else:
         fig = px.bar(counts, x="count", y="object_name", orientation="h", color="count",
-                     color_continuous_scale=["#18d5b1", "#4d7cff"], title="Most observed object classes")
+                     color_continuous_scale=["#62b7b2", "#d7a99e"], title="Most observed object classes")
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           coloraxis_showscale=False, yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig, width="stretch")
@@ -52,7 +52,7 @@ with right:
         st.info("Known vs unknown face activity will appear here.")
     else:
         labels = faces.recognized_person.fillna("Unclassified").apply(lambda x: "Unknown" if x == "Unknown" else "Known").value_counts()
-        fig = px.pie(values=labels.values, names=labels.index, hole=.68, color_discrete_sequence=["#18d5b1", "#ff647c"])
+        fig = px.pie(values=labels.values, names=labels.index, hole=.68, color_discrete_sequence=["#62b7b2", "#d7a99e"])
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", legend_orientation="h")
         st.plotly_chart(fig, width="stretch")
 

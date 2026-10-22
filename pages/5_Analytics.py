@@ -38,7 +38,7 @@ faces = df[df.object_type == "face"].copy()
 with c1:
     if not faces.empty:
         faces["status"] = faces.recognized_person.fillna("Unknown").apply(lambda x: "Unknown" if x == "Unknown" else "Known")
-        fig = px.pie(faces, names="status", hole=.65, title="Known vs Unknown Faces", color_discrete_sequence=["#20d7b4", "#ef5466"])
+        fig = px.pie(faces, names="status", hole=.65, title="Known vs Unknown Faces", color_discrete_sequence=["#62b7b2", "#d7a99e"])
         fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)"); st.plotly_chart(fig, use_container_width=True)
 with c2:
     known = faces[~faces.recognized_person.isin([None, "Unknown"])].recognized_person.value_counts().head(10)

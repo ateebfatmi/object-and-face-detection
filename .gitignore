@@ -19,5 +19,7 @@ data/processed/*
 evaluation/dataset.yaml
 evaluation/*-results.json
 data/openimages_daily_objects/
+data/lvis_keys/
 runs/daily_objects/
+runs/key_eval/
 !data/**/.gitkeep

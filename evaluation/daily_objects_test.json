@@ -1,0 +1,24 @@
+{
+  "dataset": "Open Images daily-object subset",
+  "images": 90,
+  "instances": 125,
+  "split": "test",
+  "weights": "models/daily_objects.pt",
+  "image_size": 512,
+  "precision": 0.7207,
+  "recall": 0.5912,
+  "map50": 0.6487,
+  "map50_95": 0.4926,
+  "per_class": [
+    {"class": "backpack", "precision": 0.6951, "recall": 0.6231, "map50": 0.6372, "map50_95": 0.4748},
+    {"class": "baseball bat", "precision": 0.7473, "recall": 0.6667, "map50": 0.7454, "map50_95": 0.3281},
+    {"class": "bottle", "precision": 0.6675, "recall": 0.4304, "map50": 0.5609, "map50_95": 0.4754},
+    {"class": "ceiling fan", "precision": 0.8685, "recall": 0.5, "map50": 0.5538, "map50_95": 0.4416},
+    {"class": "coffee cup", "precision": 0.8086, "recall": 0.5295, "map50": 0.6477, "map50_95": 0.5509},
+    {"class": "headphones", "precision": 0.8226, "recall": 0.5455, "map50": 0.717, "map50_95": 0.578},
+    {"class": "laptop", "precision": 0.5491, "recall": 0.6364, "map50": 0.6006, "map50_95": 0.4537},
+    {"class": "mobile phone", "precision": 0.7128, "recall": 1.0, "map50": 0.897, "map50_95": 0.8106},
+    {"class": "pen", "precision": 0.6457, "recall": 0.6471, "map50": 0.596, "map50_95": 0.3697},
+    {"class": "watch", "precision": 0.69, "recall": 0.3333, "map50": 0.5318, "map50_95": 0.4431}
+  ]
+}

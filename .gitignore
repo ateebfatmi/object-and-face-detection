@@ -18,4 +18,6 @@ data/uploads/*
 data/processed/*
 evaluation/dataset.yaml
 evaluation/*-results.json
+data/openimages_daily_objects/
+runs/daily_objects/
 !data/**/.gitkeep

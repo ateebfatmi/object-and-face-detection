@@ -17,6 +17,8 @@ DATABASE_PATH = DATABASE_DIR / "visionguard.db"
 YOLO11N_MODEL = MODELS_DIR / "yolo11n.pt"
 YOLO11S_MODEL = MODELS_DIR / "yolo11s.pt"
 YOLO_WORLD_MODEL = MODELS_DIR / "yolov8s-worldv2.pt"
+OBJECTS365_MODEL = MODELS_DIR / "yolo26s-objv1-150.pt"
+DAILY_OBJECTS_MODEL = MODELS_DIR / "daily_objects.pt"
 BYTETRACK_CONFIG = MODELS_DIR / "bytetrack.yaml"
 BYTETRACK_EXPERIMENTAL_CONFIG = MODELS_DIR / "bytetrack_extended.yaml"
 
@@ -51,3 +53,6 @@ class DetectionSettings:
     # resize. Individual real-time views can still select a smaller width.
     max_width: int = 1440
     frame_stride: int = 1
+    # Live demo safety: non-person objects must agree across this many
+    # consecutive frames before they are drawn or persisted.
+    temporal_confirmation_frames: int = 1

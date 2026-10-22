@@ -14,8 +14,17 @@ import numpy as np
 from src.database import Database
 from src.face_detector import FaceDetector
 from src.face_recognizer import FaceRecognizer, slugify
-from src.object_detector import ACCESSORY_PROMPTS, CUSTOM_PROMPTS, ObjectDetection, ObjectDetector
+from src.object_detector import (
+    ACCESSORY_PROMPTS,
+    BACKPACK_VERIFY_PROMPTS,
+    CUSTOM_PROMPTS,
+    DAILY_MODEL_CLASSES,
+    ObjectDetection,
+    ObjectDetector,
+    WATCH_VERIFY_PROMPTS,
+)
 from src.performance import classification_report, summarize_benchmark
+from src.processor import TemporalObjectFilter
 from src.ui import compact_navigation
 from src.video_utils import Cooldown, decode_image, resize_for_inference
 from scripts.evaluate_object_detection import build_report
@@ -47,6 +56,23 @@ class FakeBoxes:
 
 
 class CoreTests(unittest.TestCase):
+    def test_temporal_filter_confirms_non_person_on_second_matching_frame(self) -> None:
+        filter_ = TemporalObjectFilter()
+        first = ObjectDetection((10, 10, 50, 100), "backpack", .7, 4, "yolo11")
+        second = ObjectDetection((12, 11, 52, 101), "backpack", .72, 4, "yolo11")
+        person = ObjectDetection((100, 20, 300, 500), "person", .9, 1, "yolo11")
+        self.assertEqual(filter_.update([first, person], 2), [person])
+        self.assertEqual(filter_.update([second, person], 2), [second, person])
+
+    def test_temporal_filter_rejects_changed_class_and_resets(self) -> None:
+        filter_ = TemporalObjectFilter()
+        phone = ObjectDetection((10, 10, 50, 100), "cell phone", .7, None, "yolo11")
+        scissors = ObjectDetection((10, 10, 50, 100), "scissors", .7, None, "yolo11")
+        self.assertEqual(filter_.update([phone], 2), [])
+        self.assertEqual(filter_.update([scissors], 2), [])
+        filter_.reset()
+        self.assertEqual(filter_.update([phone], 2), [])
+
     def test_compact_navigation_marks_current_page(self) -> None:
         markup = compact_navigation("Project Guide")
         self.assertIn('class="vg-mini-link active"', markup)
@@ -105,6 +131,7 @@ class CoreTests(unittest.TestCase):
     def test_fusion_deduplicates_custom_and_prefers_model_predicted_pen(self) -> None:
         standard = [
             ObjectDetection((0, 0, 20, 100), "scissors", .70, 1, "yolo11"),
+            ObjectDetection((1, 1, 19, 99), "baseball bat", .60, 3, "yolo11"),
             ObjectDetection((200, 200, 400, 500), "person", .90, 2, "yolo11"),
         ]
         custom = [
@@ -116,6 +143,43 @@ class CoreTests(unittest.TestCase):
         self.assertEqual([(item.name, item.detector_source) for item in fused], [
             ("person", "yolo11"), ("pen", "yolo_world")
         ])
+
+    def test_fusion_keeps_stronger_custom_label_for_same_physical_box(self) -> None:
+        custom = [
+            ObjectDetection((100, 100, 220, 240), "watch", .08, None, "yolo_world"),
+            ObjectDetection((102, 101, 221, 239), "headphones", .02, None, "yolo_world"),
+        ]
+        fused = ObjectDetector._fuse([], custom)
+        self.assertEqual([(item.name, item.confidence) for item in fused], [("watch", .08)])
+
+    def test_fusion_rejects_weak_world_pen_on_background_edge(self) -> None:
+        standard = [ObjectDetection((100, 100, 700, 700), "person", .90, 1, "yolo11")]
+        custom = [
+            ObjectDetection((750, 100, 820, 600), "pen", .02, None, "yolo_world"),
+            ObjectDetection((200, 150, 240, 500), "pen", .02, None, "yolo_world"),
+            ObjectDetection((850, 100, 900, 600), "pen", .15, None, "daily_yolo"),
+        ]
+        fused = ObjectDetector._fuse(standard, custom)
+        self.assertEqual(
+            [(item.name, item.detector_source) for item in fused],
+            [("person", "yolo11"), ("pen", "daily_yolo"), ("pen", "yolo_world")],
+        )
+
+    def test_fusion_prefers_specific_key_over_bottle_and_pen(self) -> None:
+        standard = [
+            ObjectDetection((0, 0, 500, 700), "person", .90, 1, "yolo11"),
+            ObjectDetection((100, 100, 250, 600), "remote", .60, 2, "yolo11"),
+        ]
+        custom = [
+            ObjectDetection((100, 100, 250, 600), "bottle", .20, None, "yolo_world"),
+            ObjectDetection((115, 110, 160, 500), "pen", .03, None, "yolo_world"),
+            ObjectDetection((130, 300, 220, 410), "key", .10, None, "yolo_world"),
+        ]
+        fused = ObjectDetector._fuse(standard, custom)
+        self.assertEqual(
+            [(item.name, item.detector_source) for item in fused],
+            [("person", "yolo11"), ("key", "yolo_world")],
+        )
 
     def test_fusion_prefers_targeted_bottle_and_fan_over_coco_confusions(self) -> None:
         standard = [
@@ -135,17 +199,54 @@ class CoreTests(unittest.TestCase):
         self.assertIn("bottle", CUSTOM_PROMPTS)
         self.assertIn("stainless steel bottle", CUSTOM_PROMPTS)
         self.assertIn("electric ceiling fan", CUSTOM_PROMPTS)
+        self.assertIn("car key with black keychain", CUSTOM_PROMPTS)
         self.assertEqual(ACCESSORY_PROMPTS, ("long thin pen", "earbuds", "headphones"))
+        self.assertEqual(BACKPACK_VERIFY_PROMPTS, ("backpack", "hanging clothes"))
+        self.assertEqual(WATCH_VERIFY_PROMPTS, ("bottle", "analog wristwatch"))
+
+    def test_backpack_suppression_requires_clear_clothing_evidence(self) -> None:
+        self.assertTrue(ObjectDetector._clothing_evidence_wins(.0, .0286))
+        self.assertTrue(ObjectDetector._clothing_evidence_wins(.01, .02))
+        self.assertFalse(ObjectDetector._clothing_evidence_wins(.02, .02))
+        self.assertFalse(ObjectDetector._clothing_evidence_wins(.0, .01))
+
+    def test_watch_replacement_requires_clear_watch_evidence(self) -> None:
+        self.assertTrue(ObjectDetector._watch_evidence_wins(.0545, .0672))
+        self.assertFalse(ObjectDetector._watch_evidence_wins(.06, .062))
+        self.assertFalse(ObjectDetector._watch_evidence_wins(.0, .02))
 
     def test_custom_postprocess_keeps_bottle_and_fan_shapes(self) -> None:
         detections = [
             ObjectDetection((100, 100, 300, 800), "bottle", .04, detector_source="yolo_world"),
             ObjectDetection((400, 100, 900, 550), "fan", .03, detector_source="yolo_world"),
+            ObjectDetection((1100, 100, 1300, 800), "bottle", .08, detector_source="yolo_world"),
+            ObjectDetection((900, 400, 1400, 850), "fan", .09, detector_source="yolo_world"),
             ObjectDetection((0, 0, 1500, 900), "bottle", .06, detector_source="yolo_world"),
             ObjectDetection((0, 0, 1000, 100), "fan", .04, detector_source="yolo_world"),
         ]
         kept = ObjectDetector._postprocess_custom(detections, (1080, 1920))
         self.assertEqual([item.name for item in kept], ["bottle", "fan"])
+
+    def test_daily_postprocess_uses_class_gates_and_shape_checks(self) -> None:
+        detections = [
+            ObjectDetection((10, 10, 30, 210), "pen", .20, detector_source="daily_yolo"),
+            ObjectDetection((50, 50, 150, 145), "pen", .80, detector_source="daily_yolo"),
+            ObjectDetection((200, 10, 300, 250), "bottle", .40, detector_source="daily_yolo"),
+            ObjectDetection((350, 10, 650, 230), "fan", .30, detector_source="daily_yolo"),
+            ObjectDetection((700, 10, 800, 180), "watch", .20, detector_source="daily_yolo"),
+        ]
+        kept = ObjectDetector._postprocess_daily(detections, (720, 1280))
+        self.assertEqual([item.name for item in kept], ["pen", "bottle", "fan"])
+
+    def test_weak_world_fan_does_not_cover_strong_phone(self) -> None:
+        standard = [
+            ObjectDetection((200, 100, 700, 800), "cell phone", .89, 4, "yolo11"),
+        ]
+        custom = [
+            ObjectDetection((205, 105, 695, 795), "fan", .02, None, "yolo_world"),
+        ]
+        fused = ObjectDetector._fuse(standard, custom)
+        self.assertEqual([(item.name, item.confidence) for item in fused], [("cell phone", .89)])
 
     def test_custom_postprocess_rejects_weak_edge_like_pen(self) -> None:
         detections = [
@@ -253,6 +354,12 @@ class CoreTests(unittest.TestCase):
 
             def __init__(self, path):
                 loaded.append(str(path))
+                if str(path).endswith("daily_objects.pt"):
+                    self.names = dict(enumerate(DAILY_MODEL_CLASSES))
+                elif str(path).endswith("yolo26s-objv1-150.pt"):
+                    self.names = {index: "person" if index == 0 else f"object-{index}" for index in range(365)}
+                else:
+                    self.names = {index: "person" if index == 0 else f"class-{index}" for index in range(80)}
 
             def set_classes(self, prompts):
                 self.names = dict(enumerate(prompts))
@@ -263,13 +370,18 @@ class CoreTests(unittest.TestCase):
         with patch.dict(sys.modules, {"ultralytics": module}):
             fast = ObjectDetector("fast")
             hybrid = ObjectDetector("hybrid")
+            diverse = ObjectDetector("diverse")
             self.assertEqual(fast.inference_size, 640)
             self.assertEqual(hybrid.inference_size, 960)
+            self.assertEqual(diverse.inference_size, 768)
             self.assertEqual(tuple(hybrid.custom_model.names.values()), CUSTOM_PROMPTS)
+            self.assertEqual(tuple(hybrid.daily_model.names.values()), DAILY_MODEL_CLASSES)
             with self.assertRaises(ValueError):
                 ObjectDetector("typo")
         self.assertTrue(any(path.endswith("yolo11n.pt") for path in loaded))
         self.assertTrue(any(path.endswith("yolov8s-worldv2.pt") for path in loaded))
+        self.assertTrue(any(path.endswith("daily_objects.pt") for path in loaded))
+        self.assertTrue(any(path.endswith("yolo26s-objv1-150.pt") for path in loaded))
 
     def test_tracking_reset_resets_each_model_tracker(self) -> None:
         class Tracker:
@@ -287,6 +399,7 @@ class CoreTests(unittest.TestCase):
         detector.custom_model = types.SimpleNamespace(
             predictor=types.SimpleNamespace(trackers=[custom_tracker], vid_path=["old"])
         )
+        detector.daily_model = None
         detector.reset_tracking()
         self.assertEqual((standard_tracker.resets, custom_tracker.resets), (1, 1))
         self.assertEqual(detector.model.predictor.vid_path, [None])

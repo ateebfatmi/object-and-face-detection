@@ -17,11 +17,16 @@ hero("Live Detection", "Real-time YOLO tracking and private, on-device face reco
 
 with st.sidebar:
     st.header("Detection settings")
+    demo_safe = st.toggle(
+        "Demo Safe Mode",
+        True,
+        help="Uses conservative thresholds and confirms non-person objects across two consecutive frames before displaying them.",
+    )
     object_on = st.toggle("Object Detection", True)
     model_label = st.selectbox(
         "Object model",
-        ["Extended - Fans, bottles + accessories", "Accurate - Standard objects", "Fast - Lower CPU usage"],
-        help="Extended adds a YOLO-World pass for fans, metal bottles, pens, headphones, and earbuds. It is slower than the COCO-only modes.",
+        ["Diverse - 365 classes + open vocabulary", "Extended - Daily objects", "Accurate - Standard objects", "Fast - Lower CPU usage"],
+        help="Diverse combines an Objects365 model pretrained on 1.74M images with the trained daily-object model and YOLO-World verification. Extended retains the stronger 80-class YOLO11 base and adds the same specialist passes.",
         disabled=not object_on,
         key="object_model_v4",
     )
@@ -30,14 +35,14 @@ with st.sidebar:
     tracking_on = st.toggle("Object Tracking", True, disabled=not object_on)
     save_unknown = st.toggle("Save Unknown Faces", False)
     evidence_on = st.toggle("Capture Screenshots", False)
-    confidence = st.slider("YOLO11 confidence", .1, .95, .35, .05,
+    confidence = st.slider("YOLO11 confidence", .1, .95, .45 if demo_safe else .35, .05,
                            help="Raise this to reduce false positives; lower it to recover small or occluded COCO objects.")
     iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05,
                               help="Controls suppression of overlapping boxes. It does not change the supported classes.")
     custom_confidence = st.slider("YOLO-World confidence", .01, .50, .02, .01,
-                                  disabled=not model_label.startswith("Extended"),
+                                  disabled=not model_label.startswith(("Diverse", "Extended")),
                                   help="Experimental open-vocabulary scores are not calibrated like YOLO11 scores.")
-    face_threshold = st.slider("Face Recognition Threshold", .25, .80, .45, .01)
+    face_threshold = st.slider("Face Recognition Threshold", .25, .80, .50 if demo_safe else .45, .01)
     triggers = set(st.multiselect("Screenshot triggers", ["unknown_person", "cell phone", "laptop", "backpack"], ["unknown_person", "cell phone"]))
 
 settings = DetectionSettings(object_detection=object_on, face_detection=face_on,
@@ -45,8 +50,14 @@ settings = DetectionSettings(object_detection=object_on, face_detection=face_on,
                              save_unknown_faces=save_unknown, capture_screenshots=evidence_on,
                              confidence=confidence, iou_threshold=iou_threshold,
                              custom_confidence=custom_confidence, face_threshold=face_threshold,
-                             max_width=960 if model_label.startswith("Fast") else 1280)
-object_mode = "hybrid" if model_label.startswith("Extended") else "fast" if model_label.startswith("Fast") else "accurate"
+                             max_width=960 if model_label.startswith("Fast") else 1280,
+                             temporal_confirmation_frames=2 if demo_safe else 1)
+object_mode = (
+    "diverse" if model_label.startswith("Diverse")
+    else "hybrid" if model_label.startswith("Extended")
+    else "fast" if model_label.startswith("Fast")
+    else "accurate"
+)
 
 try:
     processor = get_processor(object_on, face_on, object_mode)
@@ -114,4 +125,6 @@ def render_live_metrics() -> None:
 
 render_live_metrics()
 
+if demo_safe:
+    st.caption("Demo Safe Mode: non-person object labels appear after two matching frames; people and faces remain immediate.")
 st.caption("Live frames are processed locally by the Streamlit server. Browser camera access requires localhost or HTTPS.")

@@ -12,6 +12,8 @@ import numpy as np
 from .config import (
     BYTETRACK_CONFIG,
     BYTETRACK_EXPERIMENTAL_CONFIG,
+    DAILY_OBJECTS_MODEL,
+    OBJECTS365_MODEL,
     YOLO11N_MODEL,
     YOLO11S_MODEL,
     YOLO_WORLD_MODEL,
@@ -27,6 +29,7 @@ CUSTOM_PROMPTS = (
     "thermos bottle",
     "flask",
     "electric ceiling fan",
+    "car key with black keychain",
     # A visual description works materially better than the bare COCO-missing
     # noun for thin pens held in front of a webcam.
     "long thin pen",
@@ -34,6 +37,8 @@ CUSTOM_PROMPTS = (
     "headphones",
 )
 ACCESSORY_PROMPTS = ("long thin pen", "earbuds", "headphones")
+BACKPACK_VERIFY_PROMPTS = ("backpack", "hanging clothes")
+WATCH_VERIFY_PROMPTS = ("bottle", "analog wristwatch")
 CUSTOM_LABELS = {
     "bottle": "bottle",
     "water bottle": "bottle",
@@ -45,6 +50,30 @@ CUSTOM_LABELS = {
     "long thin pen": "pen",
     "earbuds": "earbuds",
     "headphones": "headphones",
+    "car key with black keychain": "key",
+    "ceiling fan": "fan",
+    "mobile phone": "cell phone",
+    "coffee cup": "cup",
+    "pen/pencil": "pen",
+}
+
+DAILY_MODEL_CLASSES = (
+    "backpack", "baseball bat", "bottle", "ceiling fan", "coffee cup",
+    "headphones", "laptop", "mobile phone", "pen", "watch",
+)
+# Conservative per-class gates measured against the held-out Open Images test
+# split. Demo Safe Mode adds temporal confirmation on top of these thresholds.
+DAILY_THRESHOLDS = {
+    "backpack": 0.45,
+    "baseball bat": 0.30,
+    "bottle": 0.30,
+    "fan": 0.25,
+    "cup": 0.30,
+    "headphones": 0.25,
+    "laptop": 0.35,
+    "cell phone": 0.40,
+    "pen": 0.12,
+    "watch": 0.25,
 }
 
 # These are common COCO-only guesses for objects that the targeted World pass
@@ -52,13 +81,16 @@ CUSTOM_LABELS = {
 # strongly, so unrelated objects remain visible.
 CUSTOM_OVERRIDES = {
     "bottle": {"remote", "cell phone", "cup", "vase"},
-    "fan": {"airplane", "umbrella", "clock"},
-    "pen": {"cell phone", "scissors"},
+    "fan": {"airplane", "umbrella", "clock", "cell phone"},
+    "pen": {"baseball bat", "cell phone", "scissors"},
+    "key": {"bottle", "cell phone", "remote", "scissors"},
+    "watch": {"bottle", "cell phone", "clock"},
 }
 MODELS = {
     "fast": (YOLO11N_MODEL, 640),
     "accurate": (YOLO11S_MODEL, 960),
     "hybrid": (YOLO11S_MODEL, 960),
+    "diverse": (OBJECTS365_MODEL, 768),
 }
 
 
@@ -86,14 +118,18 @@ class ObjectDetector:
         self._require_file(model_path, f"{mode} YOLO11 weights")
         self._require_file(BYTETRACK_CONFIG, "ByteTrack configuration")
         self.model = YOLO(str(model_path))
-        self._validate_standard_model()
+        self._validate_primary_model(mode)
 
         self.custom_model = None
-        if mode == "hybrid":
+        self.daily_model = None
+        if mode in {"hybrid", "diverse"}:
             self._require_file(YOLO_WORLD_MODEL, "YOLO-World weights")
             self._require_file(BYTETRACK_EXPERIMENTAL_CONFIG, "experimental ByteTrack configuration")
             self.custom_model = YOLOWorld(str(YOLO_WORLD_MODEL))
             self.custom_model.set_classes(list(CUSTOM_PROMPTS))
+            if DAILY_OBJECTS_MODEL.is_file() and DAILY_OBJECTS_MODEL.stat().st_size > 0:
+                self.daily_model = YOLO(str(DAILY_OBJECTS_MODEL))
+                self._validate_daily_model()
 
         self.mode = mode
         self.model_path = model_path
@@ -104,10 +140,23 @@ class ObjectDetector:
         if not path.is_file() or path.stat().st_size == 0:
             raise FileNotFoundError(f"Missing {role}: {path}. The application will not silently switch models.")
 
-    def _validate_standard_model(self) -> None:
+    def _validate_primary_model(self, mode: str) -> None:
         names = self.model.names
-        if self.model.task != "detect" or len(names) != 80 or str(names.get(0)) != "person":
-            raise RuntimeError("The selected YOLO11 checkpoint is not the expected 80-class COCO detection model.")
+        expected_classes = 365 if mode == "diverse" else 80
+        expected_role = "Objects365" if mode == "diverse" else "COCO"
+        if (
+            self.model.task != "detect"
+            or len(names) != expected_classes
+            or str(names.get(0)).strip().lower() != "person"
+        ):
+            raise RuntimeError(
+                f"The selected primary checkpoint is not the expected {expected_classes}-class {expected_role} model."
+            )
+
+    def _validate_daily_model(self) -> None:
+        names = tuple(str(self.daily_model.names[index]).strip().lower() for index in range(10))
+        if self.daily_model.task != "detect" or names != DAILY_MODEL_CLASSES:
+            raise RuntimeError("daily_objects.pt does not contain the expected ten daily-use classes.")
 
     @staticmethod
     def _validate_frame(frame: np.ndarray) -> None:
@@ -153,11 +202,32 @@ class ObjectDetector:
                 )
             else:
                 results = self.model.predict(**standard_kwargs)
-            standard = self._parse(results, self.model, frame.shape[:2], detector_source="yolo11")
+            primary_source = "objects365" if self.mode == "diverse" else "yolo11"
+            standard = self._parse(results, self.model, frame.shape[:2], detector_source=primary_source)
             standard = self._postprocess_standard(standard, frame.shape[:2])
 
             if self.custom_model is None:
                 return standard
+
+            standard = self._remove_verified_clothing_backpacks(frame, standard)
+
+            daily: list[ObjectDetection] = []
+            if self.daily_model is not None:
+                daily_result = self.daily_model.predict(
+                    source=frame,
+                    conf=min(DAILY_THRESHOLDS.values()),
+                    imgsz=768,
+                    iou=iou_threshold,
+                    max_det=min(max_detections, 100),
+                    verbose=False,
+                )
+                daily = self._parse(
+                    daily_result,
+                    self.daily_model,
+                    frame.shape[:2],
+                    detector_source="daily_yolo",
+                )
+                daily = self._postprocess_daily(daily, frame.shape[:2])
 
             custom_kwargs = {
                 "conf": custom_confidence,
@@ -224,8 +294,152 @@ class ObjectDetector:
                         None,
                         "yolo_world",
                     ))
+            custom = self._replace_bottles_verified_as_watches(frame, custom)
             custom = self._postprocess_custom(custom, frame.shape[:2])
-            return self._fuse(standard, custom)
+            return self._fuse(standard, daily + custom)
+
+    @staticmethod
+    def _postprocess_daily(
+        detections: list[ObjectDetection], frame_shape: tuple[int, int]
+    ) -> list[ObjectDetection]:
+        """Apply held-out confidence gates and simple physical-shape checks."""
+        frame_height, frame_width = frame_shape
+        frame_area = max(frame_width * frame_height, 1)
+        kept: list[ObjectDetection] = []
+        for item in detections:
+            if item.confidence < DAILY_THRESHOLDS.get(item.name, 1.0):
+                continue
+            x1, y1, x2, y2 = item.box
+            width, height = max(x2 - x1, 1), max(y2 - y1, 1)
+            elongation = max(width, height) / min(width, height)
+            area_ratio = width * height / frame_area
+            if item.name in {"pen", "baseball bat"} and elongation < 2.0:
+                continue
+            if item.name == "bottle" and (height <= width or elongation < 1.25):
+                continue
+            if item.name == "fan" and (elongation > 2.5 or area_ratio < 0.005):
+                continue
+            if item.name == "watch" and area_ratio > 0.12:
+                continue
+            kept.append(item)
+        return kept
+
+    def _replace_bottles_verified_as_watches(
+        self, frame: np.ndarray, detections: list[ObjectDetection]
+    ) -> list[ObjectDetection]:
+        """Disambiguate bottle/key candidates from watches using a focused prompt pair."""
+        candidates = [item for item in detections if item.name in {"bottle", "key"}]
+        if not candidates or self.custom_model is None:
+            return detections
+
+        self.custom_model.set_classes(list(WATCH_VERIFY_PROMPTS))
+        try:
+            result = self.custom_model.predict(
+                source=frame,
+                conf=0.005,
+                imgsz=960,
+                iou=0.50,
+                max_det=50,
+                verbose=False,
+            )
+            verified = self._parse(
+                result,
+                self.custom_model,
+                frame.shape[:2],
+                detector_source="yolo_world",
+            )
+        finally:
+            self.custom_model.set_classes(list(CUSTOM_PROMPTS))
+
+        replacements: dict[int, ObjectDetection] = {}
+        for candidate in candidates:
+            nearby = [
+                item for item in verified
+                if ObjectDetector._overlap(item.box, candidate.box) >= 0.50
+            ]
+            bottle_score = max(
+                (item.confidence for item in nearby if item.name == "bottle"),
+                default=0.0,
+            )
+            watches = [item for item in nearby if item.name == "analog wristwatch"]
+            if not watches:
+                continue
+            watch = max(watches, key=lambda item: item.confidence)
+            if self._watch_evidence_wins(bottle_score, watch.confidence):
+                replacements[id(candidate)] = ObjectDetection(
+                    watch.box,
+                    "watch",
+                    watch.confidence,
+                    candidate.tracking_id,
+                    "yolo_world",
+                )
+        return [replacements.get(id(item), item) for item in detections]
+
+    @staticmethod
+    def _watch_evidence_wins(bottle_score: float, watch_score: float) -> bool:
+        """Require a useful margin before changing a model-backed bottle label."""
+        return watch_score >= 0.025 and watch_score >= max(
+            bottle_score * 1.10,
+            bottle_score + 0.005,
+        )
+
+    def _remove_verified_clothing_backpacks(
+        self, frame: np.ndarray, detections: list[ObjectDetection]
+    ) -> list[ObjectDetection]:
+        """Use YOLO-World to reject standard backpack boxes that are hanging clothes."""
+        backpacks = [item for item in detections if item.name == "backpack"]
+        if not backpacks or self.custom_model is None:
+            return detections
+
+        rejected_ids: set[int] = set()
+        frame_height, frame_width = frame.shape[:2]
+        self.custom_model.set_classes(list(BACKPACK_VERIFY_PROMPTS))
+        try:
+            for candidate in backpacks:
+                x1, y1, x2, y2 = candidate.box
+                pad_x = max(int((x2 - x1) * 0.20), 4)
+                pad_y = max(int((y2 - y1) * 0.15), 4)
+                crop = frame[
+                    max(0, y1 - pad_y):min(frame_height, y2 + pad_y),
+                    max(0, x1 - pad_x):min(frame_width, x2 + pad_x),
+                ]
+                if crop.size == 0:
+                    continue
+                result = self.custom_model.predict(
+                    source=crop,
+                    conf=0.005,
+                    imgsz=640,
+                    iou=0.50,
+                    max_det=20,
+                    verbose=False,
+                )
+                verified = self._parse(
+                    result,
+                    self.custom_model,
+                    crop.shape[:2],
+                    detector_source="yolo_world",
+                )
+                backpack_score = max(
+                    (item.confidence for item in verified if item.name == "backpack"),
+                    default=0.0,
+                )
+                clothing_score = max(
+                    (item.confidence for item in verified if item.name == "hanging clothes"),
+                    default=0.0,
+                )
+                if self._clothing_evidence_wins(backpack_score, clothing_score):
+                    rejected_ids.add(id(candidate))
+        finally:
+            self.custom_model.set_classes(list(CUSTOM_PROMPTS))
+        return [item for item in detections if id(item) not in rejected_ids]
+
+    @staticmethod
+    def _clothing_evidence_wins(backpack_score: float, clothing_score: float) -> bool:
+        """Require meaningful and clearly stronger evidence before suppression."""
+        return clothing_score >= 0.015 and clothing_score >= max(
+            backpack_score * 1.5,
+            backpack_score + 0.005,
+        )
 
     @staticmethod
     def _custom_tiles(frame: np.ndarray) -> list[tuple[np.ndarray, int, int]]:
@@ -272,7 +486,7 @@ class ObjectDetector:
     def reset_tracking(self) -> None:
         """Reset persistent ByteTrack state before a new camera/video source."""
         with self.lock:
-            for model in (self.model, self.custom_model):
+            for model in (self.model, self.custom_model, self.daily_model):
                 predictor = getattr(model, "predictor", None) if model is not None else None
                 trackers = getattr(predictor, "trackers", ()) or ()
                 for tracker in trackers:
@@ -371,6 +585,18 @@ class ObjectDetector:
             elongation = max(width, height) / min(width, height)
             area_ratio = (width * height) / frame_area
 
+            # Two- and three-percent World predictions are too weak to draw
+            # over confident YOLO11 objects. Accessory prompts retain their
+            # lower thresholds because they cover classes missing from COCO.
+            if item.name in {"bottle", "fan"} and item.confidence < 0.05:
+                continue
+
+            if item.name in {"earbuds", "headphones"} and item.confidence < 0.08:
+                continue
+
+            if item.name == "key" and item.confidence < 0.08:
+                continue
+
             # The reflective-flask prompt is intentionally broad. Retaining
             # only portrait, bottle-like regions removes its common person and
             # room-sized false positives.
@@ -397,15 +623,63 @@ class ObjectDetector:
         custom_kept: list[ObjectDetection] = []
         for candidate in sorted(custom, key=lambda item: item.confidence, reverse=True):
             if any(
-                candidate.name == other.name
-                and (
-                    ObjectDetector._iou(candidate.box, other.box) >= 0.50
-                    or ObjectDetector._overlap(candidate.box, other.box) >= 0.65
+                (
+                    candidate.name == other.name
+                    and (
+                        ObjectDetector._iou(candidate.box, other.box) >= 0.50
+                        or ObjectDetector._overlap(candidate.box, other.box) >= 0.65
+                    )
                 )
+                or ObjectDetector._iou(candidate.box, other.box) >= 0.75
                 for other in custom_kept
             ):
                 continue
             custom_kept.append(candidate)
+
+        # Prefer strong standard evidence to a weak open-vocabulary guess on
+        # the same region. In particular, do not let a 2% "fan" cover an 89%
+        # phone while still allowing strong World evidence to correct COCO.
+        custom_kept = [candidate for candidate in custom_kept if not any(
+            candidate.name in {"bottle", "fan"}
+            and standard_item.name in CUSTOM_OVERRIDES.get(candidate.name, set())
+            and standard_item.confidence >= 0.65
+            and candidate.confidence < 0.15
+            and ObjectDetector._overlap(standard_item.box, candidate.box) >= 0.65
+            for standard_item in standard
+        )]
+
+        # A weak open-vocabulary pen score on a static window/frame edge can
+        # persist across frames and defeat temporal confirmation.  Keep weak
+        # WORLD pen candidates only when they overlap a detected person (the
+        # live-demo use case is a hand-held pen). Strong WORLD evidence and
+        # the separately trained daily-object model remain eligible without
+        # this contextual requirement.
+        people = [item for item in standard if item.name == "person"]
+        custom_kept = [candidate for candidate in custom_kept if not (
+            candidate.name == "pen"
+            and candidate.detector_source == "yolo_world"
+            and candidate.confidence < 0.08
+            and not any(
+                ObjectDetector._overlap(candidate.box, person.box) >= 0.20
+                for person in people
+            )
+        )]
+
+        # A long keychain/lanyard is often interpreted as a bottle or pen. A
+        # confident nested key prediction is more specific, so suppress those
+        # broader conflicting regions before bottle/fan priority is applied.
+        keys = [
+            item for item in custom_kept
+            if item.name == "key" and item.confidence >= 0.08
+        ]
+        custom_kept = [candidate for candidate in custom_kept if (
+            candidate.name == "key"
+            or candidate.name not in {"bottle", "earbuds", "headphones", "pen"}
+            or not any(
+                ObjectDetector._overlap(candidate.box, key.box) >= 0.25
+                for key in keys
+            )
+        )]
 
         targeted_regions = [item for item in custom_kept if item.name in {"bottle", "fan"}]
         custom_kept = [item for item in custom_kept if (
@@ -450,10 +724,19 @@ class ObjectDetector:
             x1, y1, x2, y2 = item.box
             if item.detector_source == "yolo_world":
                 color = (255, 190, 70)
+            elif item.detector_source == "daily_yolo":
+                color = (210, 90, 255)
+            elif item.detector_source == "objects365":
+                color = (180, 150, 40)
             else:
                 color = (46, 204, 113) if item.name == "person" else (0, 174, 255)
             suffix = f" #{item.tracking_id}" if item.tracking_id is not None else ""
-            source = " · WORLD" if item.detector_source == "yolo_world" else ""
+            source = (
+                " · WORLD" if item.detector_source == "yolo_world"
+                else " · DAILY" if item.detector_source == "daily_yolo"
+                else " · 365" if item.detector_source == "objects365"
+                else ""
+            )
             label = f"{item.name.title()}{suffix} - {item.confidence:.0%}{source}"
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             label_right = min(frame.shape[1], x1 + max(120, len(label) * 8))

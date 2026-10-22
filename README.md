@@ -7,8 +7,9 @@ VisionGuard combines Ultralytics YOLO, ByteTrack, OpenCV YuNet/SFace, Streamlit,
 ## Highlights
 
 - Real-time browser-webcam detection through WebRTC
-- YOLO11 detection across all 80 COCO classes plus an extended YOLO-World pass for fans, metal bottles, pens, earbuds, and headphones
-- Separate experimental YOLO-World detections for pens, earbuds, and headphones
+- YOLO11 detection across all 80 COCO classes plus a fine-tuned daily-object model and targeted YOLO-World verification
+- Daily-use coverage for backpacks, bats, bottles, fans, cups, headphones, laptops, phones, pens, and watches
+- Optional Diverse mode with an Objects365 checkpoint pretrained on 1.74 million images across 365 classes
 - Persistent ByteTrack IDs for moving objects
 - Dedicated YuNet face detection independent of person boxes
 - Local SFace embeddings with conservative configurable matching
@@ -28,7 +29,7 @@ VisionGuard combines Ultralytics YOLO, ByteTrack, OpenCV YuNet/SFace, Streamlit,
 ```mermaid
 flowchart LR
     A["Webcam / Image / Video"] --> P["VisionProcessor"]
-    P --> Y["YOLO 11 + ByteTrack"]
+    P --> Y["YOLO 11 + Daily Objects + ByteTrack"]
     P --> F["YuNet Face Detector"]
     F --> R["SFace Embeddings"]
     R --> K["Local Known-Face Store"]
@@ -67,7 +68,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open `http://localhost:8501`. VisionGuard now requires the selected YOLO weights to exist in `models/` and will never silently substitute another model. The expected files are `yolo11n.pt`, `yolo11s.pt`, and (for Experimental mode) `yolov8s-worldv2.pt`. Obtain these checkpoints only from the official Ultralytics release mechanism. YuNet and SFace are downloaded from the official OpenCV Zoo if absent. All inference is local after setup.
+Open `http://localhost:8501`. VisionGuard requires the selected YOLO weights to exist in `models/` and will never silently substitute another standard model. The expected files are `yolo11n.pt`, `yolo11s.pt`, and (for Extended mode) `yolov8s-worldv2.pt`. Extended mode also loads `daily_objects.pt` when the locally trained checkpoint is present. Diverse mode uses the official `yolo26s-objv1-150.pt` Objects365 checkpoint plus the same specialist passes. Obtain base checkpoints only from the official Ultralytics release mechanism. YuNet and SFace are downloaded from the official OpenCV Zoo if absent. All inference is local after setup.
 
 ## Using VisionGuard
 
@@ -122,6 +123,8 @@ visionguard-ai/
 ├── docs/TECHNICAL_AUDIT.md
 ├── evaluation/{README.md,dataset.example.yaml}
 ├── scripts/evaluate_object_detection.py
+├── scripts/prepare_openimages_daily_objects.py
+├── scripts/train_daily_objects.py
 ├── data/{known_faces,unknown_faces,screenshots,uploads,processed}/
 ├── database/
 ├── models/
@@ -140,14 +143,26 @@ SQLAlchemy creates the SQLite file and tables automatically. Queries are paramet
 
 ## How detection works
 
-YOLO11 detects COCO objects and can pass detections to ByteTrack, whose IDs persist across adjacent frames. In Extended mode, a separate tiled YOLO-World pass searches for targeted open-vocabulary objects, including a visually described `long thin pen`; those events are stored as `yolo_world` rather than being presented as ordinary YOLO11 predictions. YuNet separately locates faces and five landmarks. SFace aligns each face, creates a feature vector, and compares it with averaged registered vectors using cosine similarity. The pipeline annotates the frame, applies evidence cooldowns, and returns structured events for SQLite logging.
+YOLO11 detects COCO objects and can pass detections to ByteTrack, whose IDs persist across adjacent frames. In Extended mode, a fine-tuned ten-class YOLO model supplies conservative daily-object evidence and a separate tiled YOLO-World pass searches for targeted open-vocabulary objects. Diverse mode replaces the 80-class primary pass with an official 365-class Objects365 model pretrained on 1.74 million images. Events are stored with their actual detector source, and class-aware fusion removes overlapping lower-quality guesses. YuNet separately locates faces and five landmarks. SFace aligns each face, creates a feature vector, and compares it with averaged registered vectors using cosine similarity. The pipeline annotates the frame, applies evidence cooldowns, and returns structured events for SQLite logging.
 
-Standard YOLO11 COCO weights do **not** contain pen, earbuds, headphones, or wristwatch classes. Confidence changes cannot add missing categories. Accurate and Fast modes therefore report only the labels actually produced by their COCO model. Use Experimental mode for the three configured open-vocabulary categories, and treat its results as less reliable until evaluated on representative labeled data.
+Standard YOLO11 COCO weights do **not** contain pen, earbuds, headphones, or wristwatch classes. Confidence changes cannot add missing categories. Accurate and Fast modes therefore report only the labels actually produced by their COCO model. Use Extended mode for the custom daily-object checkpoint and open-vocabulary pass.
+
+### Rebuild the daily-object model
+
+The dataset builder downloads licensed Open Images annotations and images, keeps provenance, creates deterministic train/validation/test splits, and writes YOLO-format labels. Generated data, runs, and weights remain local and are ignored by Git.
+
+```bash
+.venv/bin/python scripts/prepare_openimages_daily_objects.py --images-per-class 60
+.venv/bin/python scripts/train_daily_objects.py --epochs 20 --imgsz 512 --batch 8
+```
+
+The current 598-image run reached `0.649` mAP@0.50 and `0.493` mAP@0.50:0.95 on its untouched 90-image Open Images test split. This is a reproducible benchmark, not a guarantee of error-free webcam detection; room-specific labeled images are still the best next step for domain adaptation.
 
 ## Performance notes
 
 - The default `models/yolo11s.pt` runs at 960px and uses test-time augmentation for still images to improve small-object recall; `yolo11n` remains available as a faster 640px option.
-- Accurate mode (YOLO11s) is the recommended default for standard COCO objects. Experimental mode adds a separately sourced YOLO-World pass for pens, headphones, and earbuds with class-aware duplicate fusion.
+- Accurate mode (YOLO11s) is the recommended default for standard COCO objects. Extended mode adds the fine-tuned daily-object model and a separately sourced YOLO-World pass with class-aware duplicate fusion.
+- Diverse mode covers 365 base classes before the specialist passes, but is slower and does not imply error-free recognition of arbitrary objects.
 - Defaults are YOLO11 confidence `0.35`, NMS IoU `0.50`, YOLO-World confidence `0.02`, and up to 300 detections. These are operating defaults, not validated optimums.
 - Live Fast mode scales frames to at most 960 px; Accurate and Experimental modes retain up to 1280 px before model letterboxing.
 - Video frame stride can trade temporal detail for speed.
@@ -159,6 +174,8 @@ Standard YOLO11 COCO weights do **not** contain pen, earbuds, headphones, or wri
 ## Error handling and testing
 
 The UI handles invalid media, absent faces, multi-face registration images, model/download failures, duplicate identifiers, unsupported uploads, and unavailable camera permissions with readable messages. Run local checks with:
+
+For a live presentation, follow the conservative setup and rehearsal steps in [`docs/DEMO_CHECKLIST.md`](docs/DEMO_CHECKLIST.md). Live Detection enables Demo Safe Mode by default, requiring two matching frames before a non-person object is displayed.
 
 ```bash
 python -m compileall app.py pages src tests
@@ -173,7 +190,7 @@ For real object-detection accuracy metrics, create a held-out YOLO-format datase
   --output evaluation/accurate-results.json
 ```
 
-This reports precision, recall, F1, mAP@0.50, mAP@0.50:0.95, per-class results, false positives/negatives, and latency. No labeled dataset is bundled, so these metrics are currently **not evaluated**. See [`evaluation/README.md`](evaluation/README.md) and [`docs/TECHNICAL_AUDIT.md`](docs/TECHNICAL_AUDIT.md).
+This reports precision, recall, F1, mAP@0.50, mAP@0.50:0.95, per-class results, false positives/negatives, and latency. The downloaded Open Images subset is ignored by Git; its last held-out metrics are summarized above. See [`evaluation/README.md`](evaluation/README.md) and [`docs/TECHNICAL_AUDIT.md`](docs/TECHNICAL_AUDIT.md).
 
 Manual acceptance testing should cover one/multiple/no faces, registered/unknown faces, low light and varied poses, multiple moving objects, corrupt uploads, unavailable cameras, and representative MP4/MOV/AVI/MKV files. Hardware and codec behavior varies, so webcam and output playback should be tested on the demonstration machine.
 
@@ -185,7 +202,7 @@ Face images and embeddings are sensitive biometric data. VisionGuard processes t
 
 - This is not a certified identity, security, or access-control system.
 - Recognition quality depends on reference images, pose, lighting, occlusion, and demographic/model bias.
-- YOLO11 cannot detect categories outside its 80 COCO labels; YOLO-World prompts do not guarantee reliable arbitrary-category detection.
+- Accurate/Fast YOLO11 modes cannot detect categories outside their 80 COCO labels; Extended mode adds ten trained daily-use classes, but neither the custom model nor YOLO-World can guarantee arbitrary-category detection.
 - A track ID may change after prolonged occlusion or leaving the frame.
 - MP4 output relies on codecs available in the local OpenCV build.
 - Live event persistence is intentionally conservative; image/video sessions provide full logging.

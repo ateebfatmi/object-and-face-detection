@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
+import threading
 from time import perf_counter
 
 import cv2
@@ -14,6 +16,68 @@ from .object_detector import ObjectDetection, ObjectDetector
 from .video_utils import Cooldown, resize_for_inference
 
 
+@dataclass(slots=True)
+class _ObjectEvidence:
+    detection: ObjectDetection
+    consecutive_frames: int
+
+
+class TemporalObjectFilter:
+    """Require repeatable spatial evidence before displaying non-person objects."""
+
+    def __init__(self) -> None:
+        self._previous: list[_ObjectEvidence] = []
+        self._lock = threading.RLock()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._previous.clear()
+
+    def update(
+        self, detections: list[ObjectDetection], required_frames: int
+    ) -> list[ObjectDetection]:
+        if required_frames <= 1:
+            self.reset()
+            return detections
+
+        with self._lock:
+            available = list(self._previous)
+            current: list[_ObjectEvidence] = []
+            visible: list[ObjectDetection] = []
+            for detection in detections:
+                if detection.name == "person":
+                    visible.append(detection)
+                    continue
+
+                best_index: int | None = None
+                best_overlap = 0.0
+                for index, previous in enumerate(available):
+                    prior = previous.detection
+                    if prior.name != detection.name or prior.detector_source != detection.detector_source:
+                        continue
+                    same_track = (
+                        detection.tracking_id is not None
+                        and prior.tracking_id is not None
+                        and detection.tracking_id == prior.tracking_id
+                    )
+                    overlap = ObjectDetector._iou(detection.box, prior.box)
+                    if same_track or overlap >= 0.35:
+                        score = 1.0 if same_track else overlap
+                        if score > best_overlap:
+                            best_overlap, best_index = score, index
+
+                consecutive = 1
+                if best_index is not None:
+                    consecutive = available.pop(best_index).consecutive_frames + 1
+                evidence = _ObjectEvidence(detection, consecutive)
+                current.append(evidence)
+                if consecutive >= required_frames:
+                    visible.append(detection)
+
+            self._previous = current
+            return visible
+
+
 class VisionProcessor:
     def __init__(self, object_detector: ObjectDetector | None, face_detector: FaceDetector | None,
                  face_recognizer: FaceRecognizer | None) -> None:
@@ -22,8 +86,10 @@ class VisionProcessor:
         self.recognizer = face_recognizer
         self.unknown_cooldown = Cooldown(12)
         self.evidence_cooldown = Cooldown(10)
+        self.temporal_objects = TemporalObjectFilter()
 
     def reset_tracking(self) -> None:
+        self.temporal_objects.reset()
         if self.objects:
             self.objects.reset_tracking()
 
@@ -44,6 +110,10 @@ class VisionProcessor:
                 iou_threshold=settings.iou_threshold,
                 custom_confidence=settings.custom_confidence,
                 max_detections=settings.max_detections,
+            )
+            object_items = self.temporal_objects.update(
+                object_items,
+                settings.temporal_confirmation_frames,
             )
             self.objects.draw(annotated, object_items)
             for item in object_items:

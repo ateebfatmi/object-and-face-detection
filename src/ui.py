@@ -52,3 +52,18 @@ def metric_cards(items: list[tuple[str, str | int, str]]) -> None:
     cols = st.columns(len(items))
     for col, (label, value, icon) in zip(cols, items):
         col.markdown(f'<div class="metric-card"><span>{icon}</span><div class="metric-value">{value}</div><div class="metric-label">{label}</div></div>', unsafe_allow_html=True)
+
+
+def show_processing_error(context: str, exc: Exception) -> None:
+    """Render a useful recovery hint without exposing a wall of technical output."""
+    message = str(exc).strip() or exc.__class__.__name__
+    st.error(f"{context} failed: {message}")
+    lowered = message.lower()
+    if "download" in lowered or "connection" in lowered or "url" in lowered:
+        st.info("Check the internet connection once so the model files can be downloaded, then retry.")
+    elif "decode" in lowered or "codec" in lowered or "video" in lowered:
+        st.info("Try an H.264 MP4 file, or re-export the media with a standard codec.")
+    elif "memory" in lowered or "allocate" in lowered:
+        st.info("Select the Fast model, reduce the input resolution, or close other memory-heavy applications.")
+    else:
+        st.caption("Try the Fast model first. If the problem continues, restart the app and confirm that all model files exist in the models folder.")

@@ -6,7 +6,7 @@ import cv2
 import streamlit as st
 
 from src.config import DetectionSettings
-from src.ui import get_database, get_processor, hero, metric_cards, setup_page
+from src.ui import get_database, get_processor, hero, metric_cards, setup_page, show_processing_error
 from src.video_utils import decode_image
 
 setup_page("Image Detection", "🖼️")
@@ -14,7 +14,7 @@ hero("Image Detection", "Inspect objects, faces, identities, and confidence scor
 
 with st.sidebar:
     objects = st.toggle("Object Detection", True)
-    model_label = st.selectbox("Object model", ["Extended - Pens, headphones + custom classes", "Accurate - YOLO11s", "Fast - YOLO11n"], disabled=not objects, key="image_object_model_v3")
+    model_label = st.selectbox("Object model", ["Hybrid - Best overall", "Accurate - Standard objects", "Fast - Lower CPU usage"], disabled=not objects, key="image_object_model_v4")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
     confidence = st.slider("Confidence Threshold", .1, .95, .2, .05)
@@ -24,7 +24,7 @@ upload = st.file_uploader("Upload JPG, PNG, or WEBP", type=["jpg", "jpeg", "png"
 if upload:
     try:
         original = decode_image(upload.getvalue())
-        object_mode = "extended" if model_label.startswith("Extended") else "fast" if model_label.startswith("Fast") else "accurate"
+        object_mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
                                      tracking=False, confidence=confidence, face_threshold=face_threshold)
@@ -37,11 +37,13 @@ if upload:
         left.image(cv2.cvtColor(original, cv2.COLOR_BGR2RGB), caption="Original", use_container_width=True)
         right.image(cv2.cvtColor(processed, cv2.COLOR_BGR2RGB), caption="Processed", use_container_width=True)
         metric_cards([("Objects", stats["objects"], "◉"), ("Faces", stats["faces"], "◎"),
-                      ("Known", stats["known"], "✓"), ("Unknown", stats["unknown"], "!")])
+                      ("Known", stats["known"], "✓"), ("Unknown", stats["unknown"], "!"),
+                      ("Inference", f"{stats['processing_ms']:.0f} ms", "◷")])
+        st.caption(f"Pipeline: {model_label} · theoretical throughput {stats['fps']:.1f} FPS on this image")
         if stats["classes"]:
             st.write("Detection summary", stats["classes"])
         ok, encoded = cv2.imencode(".jpg", processed)
         if ok:
             st.download_button("Download processed image", encoded.tobytes(), "visionguard_result.jpg", "image/jpeg")
     except Exception as exc:
-        st.error(f"The image could not be processed: {exc}")
+        show_processing_error("Image processing", exc)

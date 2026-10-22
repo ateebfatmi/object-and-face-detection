@@ -16,6 +16,8 @@ VisionGuard combines Ultralytics YOLO, ByteTrack, OpenCV YuNet/SFace, Streamlit,
 - Image and uploaded-video processing with downloadable results
 - SQLite sessions and event-level detection history
 - Plotly KPIs, object distribution, activity, identity, and session charts
+- Measured inference latency, throughput benchmarking, and CSV-based classification evaluation
+- Presentation-ready project guide with methodology, demo flow, limitations, and viva questions
 - Evidence rules for unknown people, phones, laptops, and backpacks
 - CSV export and privacy controls for biometric data and history
 - CPU support with automatic acceleration where Ultralytics supports it
@@ -85,6 +87,8 @@ The default cosine threshold is `0.45`. Raise it to reduce false acceptance; low
 - **Video Detection:** upload MP4/MOV/AVI/MKV, select a frame stride, process, then preview/download the result.
 - **History:** filter by type, object, session, or identity and export CSV.
 - **Analytics:** review KPIs and trends derived from SQLite.
+- **Model Performance:** benchmark the selected pipeline and evaluate labeled `actual`/`predicted` results.
+- **Project Guide:** use the built-in explanation and demo sequence during a college presentation.
 
 ## Project structure
 
@@ -97,7 +101,9 @@ visionguard-ai/
 │   ├── 3_Video_Detection.py
 │   ├── 4_Face_Registration.py
 │   ├── 5_Analytics.py
-│   └── 6_Detection_History.py
+│   ├── 6_Detection_History.py
+│   ├── 7_Model_Performance.py
+│   └── 8_Project_Guide.py
 ├── src/
 │   ├── analytics.py
 │   ├── config.py
@@ -105,6 +111,7 @@ visionguard-ai/
 │   ├── face_detector.py
 │   ├── face_recognizer.py
 │   ├── object_detector.py
+│   ├── performance.py
 │   ├── processor.py
 │   ├── tracker.py
 │   ├── ui.py
@@ -133,7 +140,7 @@ YOLO detects COCO objects and can pass detections to ByteTrack, whose IDs persis
 ## Performance notes
 
 - The default `models/yolo11s.pt` improves small-object accuracy; `yolo11n` remains available as a faster option.
-- Extended mode uses YOLO-World at 1280px with a focused vocabulary and low-threshold ByteTrack configuration for small/non-COCO objects such as pens, headphones, and earbuds.
+- Hybrid mode combines YOLO11s for the full standard COCO object set with a focused YOLO-World pass for pens, scissors, headphones, and earbuds. Live Hybrid frames retain up to 1440px and overlapping prompt results are collapsed to one box.
 - Live inference scales frames to a maximum width of 960 px.
 - Video frame stride can trade temporal detail for speed.
 - Resource caching prevents model reinitialization on Streamlit reruns.

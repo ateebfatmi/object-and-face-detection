@@ -11,6 +11,19 @@ db = get_database()
 stats = db.dashboard_stats()
 
 hero("VisionGuard AI", "Intelligent Real-Time Face & Object Detection")
+
+with st.expander("Project overview · objective, method, and scope"):
+    st.markdown("""
+    **Problem statement:** Manual monitoring of people and objects is slow, inconsistent, and difficult to summarize.
+
+    **Objective:** Build a privacy-first prototype that detects and tracks common objects, recognizes locally registered
+    faces, stores detection events, and presents useful analytics without sending biometric data to a cloud API.
+
+    **Method:** Frames pass through YOLO object detection and ByteTrack tracking while YuNet detects faces and SFace
+    compares embeddings. Results are annotated, selectively stored in SQLite, and summarized in the dashboard.
+
+    **Academic scope:** This is a demonstration and evaluation system—not a certified identity or access-control product.
+    """)
 metric_cards([
     ("Unique Tracked Objects", f"{stats['objects']:,}", "◉"),
     ("Face Observations", f"{stats['faces']:,}", "◎"),

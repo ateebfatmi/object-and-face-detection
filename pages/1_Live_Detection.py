@@ -10,7 +10,7 @@ from streamlit_webrtc import RTCConfiguration, WebRtcMode, webrtc_streamer
 
 from src.config import DetectionSettings
 from src.database import Database
-from src.ui import get_processor, hero, metric_cards, setup_page
+from src.ui import get_processor, hero, metric_cards, setup_page, show_processing_error
 
 setup_page("Live Detection", "📹")
 hero("Live Detection", "Real-time YOLO tracking and private, on-device face recognition")
@@ -20,8 +20,8 @@ with st.sidebar:
     object_on = st.toggle("Object Detection", True)
     model_label = st.selectbox(
         "Object model",
-        ["Extended - Pens, headphones + custom classes", "Accurate - YOLO11s", "Fast - YOLO11n"],
-        help="Use Extended for pens/headphones. It runs at higher resolution and its confidence scores are naturally lower.",
+        ["Hybrid - Best overall", "Accurate - Standard objects", "Fast - Lower CPU usage"],
+        help="Hybrid combines YOLO11s with a high-resolution custom pass for pens, scissors, headphones and earbuds.",
         disabled=not object_on,
         key="object_model_v2",
     )
@@ -38,19 +38,21 @@ with st.sidebar:
 settings = DetectionSettings(object_detection=object_on, face_detection=face_on,
                              face_recognition=recognition_on, tracking=tracking_on,
                              save_unknown_faces=save_unknown, capture_screenshots=evidence_on,
-                             confidence=confidence, face_threshold=face_threshold)
-object_mode = "extended" if model_label.startswith("Extended") else "fast" if model_label.startswith("Fast") else "accurate"
+                             confidence=confidence, face_threshold=face_threshold,
+                             max_width=1440 if model_label.startswith("Hybrid") else 960)
+object_mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
 
 try:
     processor = get_processor(object_on, face_on, object_mode)
 except Exception as exc:
-    st.error(f"A detection model could not be loaded: {exc}")
+    show_processing_error("Detection model loading", exc)
     st.stop()
 
 class VideoProcessor:
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.stats = {"objects": 0, "faces": 0, "known": 0, "unknown": 0, "fps": 0, "classes": {}}
+        self.stats = {"objects": 0, "faces": 0, "known": 0, "unknown": 0, "fps": 0,
+                      "processing_ms": 0, "classes": {}}
         self.totals = {"total_objects": 0, "total_faces": 0, "known_faces": 0, "unknown_faces": 0}
         self.last = time.perf_counter()
         self.last_log = 0.0
@@ -96,7 +98,8 @@ def render_live_metrics() -> None:
         metric_cards([
             ("Objects", stats["objects"], "◉"), ("Faces", stats["faces"], "◎"),
             ("Known", stats["known"], "✓"), ("Unknown", stats["unknown"], "!"),
-            ("FPS", f"{stats['fps']:.1f}", "↗"),
+            ("Stream FPS", f"{stats['fps']:.1f}", "↗"),
+            ("Inference", f"{stats['processing_ms']:.0f} ms", "◷"),
         ])
         st.caption("Live analytics refresh every 0.75 seconds; database events are sampled once per second.")
     else:

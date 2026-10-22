@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 
 import cv2
 import numpy as np
@@ -25,6 +26,7 @@ class VisionProcessor:
 
     def process(self, frame: np.ndarray, settings: DetectionSettings,
                 evidence_classes: set[str] | None = None) -> tuple[np.ndarray, dict, list[dict]]:
+        started_at = perf_counter()
         ensure_directories()
         work, _ = resize_for_inference(frame, settings.max_width)
         annotated = work.copy()
@@ -71,7 +73,9 @@ class VisionProcessor:
                         if row["object_name"] == trigger or (trigger == "unknown_person" and row["recognized_person"] == "Unknown"):
                             row["image_path"] = str(path)
         counts = Counter(x.name for x in object_items)
+        processing_ms = (perf_counter() - started_at) * 1000
         stats = {"objects": len(object_items), "faces": len(face_rows),
                  "known": sum(m.known for _, m in face_rows), "unknown": sum(not m.known for _, m in face_rows),
-                 "fps": 0.0, "classes": dict(counts)}
+                 "fps": 1000 / max(processing_ms, .001), "processing_ms": processing_ms,
+                 "classes": dict(counts)}
         return annotated, stats, logs

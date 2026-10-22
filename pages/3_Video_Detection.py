@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import cv2
 import streamlit as st
 
 from src.config import PROCESSED_DIR, DetectionSettings, ensure_directories
-from src.ui import get_database, get_processor, hero, metric_cards, setup_page
+from src.ui import get_database, get_processor, hero, metric_cards, setup_page, show_processing_error
 
 setup_page("Video Detection", "🎞️")
 hero("Video Detection", "Process uploaded footage with persistent ByteTrack identities")
@@ -16,7 +17,7 @@ ensure_directories()
 
 with st.sidebar:
     objects = st.toggle("Object Detection", True)
-    model_label = st.selectbox("Object model", ["Extended - Pens, headphones + custom classes", "Accurate - YOLO11s", "Fast - YOLO11n"], disabled=not objects, key="video_object_model_v3")
+    model_label = st.selectbox("Object model", ["Hybrid - Best overall", "Accurate - Standard objects", "Fast - Lower CPU usage"], disabled=not objects, key="video_object_model_v4")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
     confidence = st.slider("Confidence Threshold", .1, .95, .2, .05)
@@ -26,6 +27,7 @@ with st.sidebar:
 upload = st.file_uploader("Upload MP4, MOV, AVI, or MKV", type=["mp4", "mov", "avi", "mkv"])
 if upload and st.button("Process video", type="primary"):
     temp_path = None
+    started_at = time.perf_counter()
     try:
         suffix = Path(upload.name).suffix.lower()
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
@@ -38,7 +40,7 @@ if upload and st.button("Process video", type="primary"):
         width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         output_path = PROCESSED_DIR / f"processed_{Path(upload.name).stem}.mp4"
         writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        object_mode = "extended" if model_label.startswith("Extended") else "fast" if model_label.startswith("Fast") else "accurate"
+        object_mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
                                      tracking=True, confidence=confidence, face_threshold=face_threshold, max_width=width)
@@ -63,12 +65,15 @@ if upload and st.button("Process video", type="primary"):
         if batch: get_database().log_detections(session_id, batch)
         get_database().finish_session(session_id, dict(aggregate))
         capture.release(); writer.release(); progress.progress(1.0)
+        elapsed = time.perf_counter() - started_at
         metric_cards([("Objects", aggregate["total_objects"], "◉"), ("Faces", aggregate["total_faces"], "◎"),
-                      ("Known", aggregate["known_faces"], "✓"), ("Unknown", aggregate["unknown_faces"], "!")])
+                      ("Known", aggregate["known_faces"], "✓"), ("Unknown", aggregate["unknown_faces"], "!"),
+                      ("Processing speed", f"{frame_no / max(elapsed, .001):.1f} FPS", "↗")])
+        st.caption(f"Processed {frame_no:,} frames in {elapsed:.1f} seconds using {model_label} with stride {stride}.")
         data = output_path.read_bytes()
         st.video(data)
         st.download_button("Download processed video", data, output_path.name, "video/mp4")
     except Exception as exc:
-        st.error(f"Video processing failed: {exc}")
+        show_processing_error("Video processing", exc)
     finally:
         if temp_path and temp_path.exists(): temp_path.unlink(missing_ok=True)

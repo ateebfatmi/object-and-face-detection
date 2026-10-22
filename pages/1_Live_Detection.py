@@ -20,10 +20,10 @@ with st.sidebar:
     object_on = st.toggle("Object Detection", True)
     model_label = st.selectbox(
         "Object model",
-        ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"],
-        help="Accurate is recommended for COCO classes. Experimental adds a separately sourced YOLO-World pass for pens, headphones, and earbuds.",
+        ["Extended - Fans, bottles + accessories", "Accurate - Standard objects", "Fast - Lower CPU usage"],
+        help="Extended adds a YOLO-World pass for fans, metal bottles, pens, headphones, and earbuds. It is slower than the COCO-only modes.",
         disabled=not object_on,
-        key="object_model_v3",
+        key="object_model_v4",
     )
     face_on = st.toggle("Face Detection", True)
     recognition_on = st.toggle("Face Recognition", True, disabled=not face_on)
@@ -34,8 +34,8 @@ with st.sidebar:
                            help="Raise this to reduce false positives; lower it to recover small or occluded COCO objects.")
     iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05,
                               help="Controls suppression of overlapping boxes. It does not change the supported classes.")
-    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .05, .01,
-                                  disabled=not model_label.startswith("Experimental"),
+    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .02, .01,
+                                  disabled=not model_label.startswith("Extended"),
                                   help="Experimental open-vocabulary scores are not calibrated like YOLO11 scores.")
     face_threshold = st.slider("Face Recognition Threshold", .25, .80, .45, .01)
     triggers = set(st.multiselect("Screenshot triggers", ["unknown_person", "cell phone", "laptop", "backpack"], ["unknown_person", "cell phone"]))
@@ -46,7 +46,7 @@ settings = DetectionSettings(object_detection=object_on, face_detection=face_on,
                              confidence=confidence, iou_threshold=iou_threshold,
                              custom_confidence=custom_confidence, face_threshold=face_threshold,
                              max_width=960 if model_label.startswith("Fast") else 1280)
-object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
+object_mode = "hybrid" if model_label.startswith("Extended") else "fast" if model_label.startswith("Fast") else "accurate"
 
 try:
     processor = get_processor(object_on, face_on, object_mode)

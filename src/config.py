@@ -44,7 +44,7 @@ class DetectionSettings:
     capture_screenshots: bool = False
     confidence: float = 0.35
     iou_threshold: float = 0.5
-    custom_confidence: float = 0.05
+    custom_confidence: float = 0.02
     max_detections: int = 300
     face_threshold: float = 0.45
     # Preserve detail for small objects before YOLO performs its own letterbox

@@ -14,7 +14,7 @@ import numpy as np
 from src.database import Database
 from src.face_detector import FaceDetector
 from src.face_recognizer import FaceRecognizer, slugify
-from src.object_detector import CUSTOM_PROMPTS, ObjectDetection, ObjectDetector
+from src.object_detector import ACCESSORY_PROMPTS, CUSTOM_PROMPTS, ObjectDetection, ObjectDetector
 from src.performance import classification_report, summarize_benchmark
 from src.ui import compact_navigation
 from src.video_utils import Cooldown, decode_image, resize_for_inference
@@ -110,10 +110,63 @@ class CoreTests(unittest.TestCase):
         custom = [
             ObjectDetection((1, 1, 19, 99), "pen", .12, 1_000_001, "yolo_world"),
             ObjectDetection((2, 2, 18, 98), "pen", .08, 1_000_002, "yolo_world"),
+            ObjectDetection((5, 20, 15, 50), "pen", .07, 1_000_003, "yolo_world"),
         ]
         fused = ObjectDetector._fuse(standard, custom)
         self.assertEqual([(item.name, item.detector_source) for item in fused], [
             ("person", "yolo11"), ("pen", "yolo_world")
+        ])
+
+    def test_fusion_prefers_targeted_bottle_and_fan_over_coco_confusions(self) -> None:
+        standard = [
+            ObjectDetection((10, 10, 80, 180), "remote", .79, 54, "yolo11"),
+            ObjectDetection((200, 10, 500, 300), "airplane", .47, 55, "yolo11"),
+            ObjectDetection((600, 10, 750, 300), "person", .90, 56, "yolo11"),
+        ]
+        custom = [
+            ObjectDetection((12, 12, 78, 178), "bottle", .20, 1_000_001, "yolo_world"),
+            ObjectDetection((205, 15, 495, 295), "fan", .18, 1_000_002, "yolo_world"),
+            ObjectDetection((30, 40, 45, 150), "pen", .10, 1_000_003, "yolo_world"),
+        ]
+        fused = ObjectDetector._fuse(standard, custom)
+        self.assertEqual([item.name for item in fused], ["person", "bottle", "fan"])
+
+    def test_world_prompts_cover_requested_objects(self) -> None:
+        self.assertIn("bottle", CUSTOM_PROMPTS)
+        self.assertIn("stainless steel bottle", CUSTOM_PROMPTS)
+        self.assertIn("electric ceiling fan", CUSTOM_PROMPTS)
+        self.assertEqual(ACCESSORY_PROMPTS, ("long thin pen", "earbuds", "headphones"))
+
+    def test_custom_postprocess_keeps_bottle_and_fan_shapes(self) -> None:
+        detections = [
+            ObjectDetection((100, 100, 300, 800), "bottle", .04, detector_source="yolo_world"),
+            ObjectDetection((400, 100, 900, 550), "fan", .03, detector_source="yolo_world"),
+            ObjectDetection((0, 0, 1500, 900), "bottle", .06, detector_source="yolo_world"),
+            ObjectDetection((0, 0, 1000, 100), "fan", .04, detector_source="yolo_world"),
+        ]
+        kept = ObjectDetector._postprocess_custom(detections, (1080, 1920))
+        self.assertEqual([item.name for item in kept], ["bottle", "fan"])
+
+    def test_custom_postprocess_rejects_weak_edge_like_pen(self) -> None:
+        detections = [
+            ObjectDetection((10, 10, 150, 320), "pen", .07, detector_source="yolo_world"),
+            ObjectDetection((300, 400, 500, 415), "pen", .053, detector_source="yolo_world"),
+            ObjectDetection((300, 500, 500, 515), "pen", .12, detector_source="yolo_world"),
+        ]
+        kept = ObjectDetector._postprocess_custom(detections, (720, 1280))
+        self.assertEqual([item.confidence for item in kept], [.07, .12])
+
+    def test_focus_candidates_only_select_plausible_coco_confusions(self) -> None:
+        detections = [
+            ObjectDetection((10, 10, 110, 410), "cell phone", .75),
+            ObjectDetection((200, 10, 600, 360), "airplane", .47),
+            ObjectDetection((700, 10, 1000, 310), "person", .90),
+            ObjectDetection((1100, 10, 1400, 160), "remote", .80),
+        ]
+        focused = ObjectDetector._focus_candidates(detections)
+        self.assertEqual([(item.name, target) for item, target in focused], [
+            ("cell phone", "bottle"),
+            ("airplane", "fan"),
         ])
 
     def test_parse_clamps_boxes_and_records_source(self) -> None:
@@ -129,12 +182,24 @@ class CoreTests(unittest.TestCase):
 
     def test_parse_normalizes_world_prompt_and_offsets_track(self) -> None:
         result = types.SimpleNamespace(boxes=FakeBoxes([[1, 2, 10, 20]], [0], [.12], [5]))
-        model = types.SimpleNamespace(names={0: "ballpoint pen"})
+        model = types.SimpleNamespace(names={0: "long thin pen"})
         parsed = ObjectDetector._parse(
             [result], model, (100, 100), track_offset=1_000_000, detector_source="yolo_world"
         )
         self.assertEqual((parsed[0].name, parsed[0].tracking_id, parsed[0].detector_source),
                          ("pen", 1_000_005, "yolo_world"))
+
+    def test_custom_tiles_cover_wide_frame_and_restore_coordinates(self) -> None:
+        frame = np.zeros((600, 1000, 3), dtype=np.uint8)
+        tiles = ObjectDetector._custom_tiles(frame)
+        self.assertEqual([(tile.shape[1], x, y) for tile, x, y in tiles],
+                         [(620, 0, 0), (620, 380, 0)])
+        shifted = ObjectDetector._offset_detections(
+            [ObjectDetection((10, 20, 30, 40), "pen", .6, None, "yolo_world")],
+            380,
+            0,
+        )
+        self.assertEqual(shifted[0].box, (390, 20, 410, 40))
 
     def test_standard_postprocess_relabels_wrist_clock_as_watch(self) -> None:
         detections = [

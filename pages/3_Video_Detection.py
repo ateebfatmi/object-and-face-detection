@@ -17,13 +17,13 @@ ensure_directories()
 
 with st.sidebar:
     objects = st.toggle("Object Detection", True)
-    model_label = st.selectbox("Object model", ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"], disabled=not objects, key="video_object_model_v5")
+    model_label = st.selectbox("Object model", ["Extended - Fans, bottles + accessories", "Accurate - Standard objects", "Fast - Lower CPU usage"], disabled=not objects, key="video_object_model_v6")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
     confidence = st.slider("YOLO11 confidence", .1, .95, .35, .05)
     iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05)
-    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .05, .01,
-                                  disabled=not model_label.startswith("Experimental"))
+    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .02, .01,
+                                  disabled=not model_label.startswith("Extended"))
     face_threshold = st.slider("Face Recognition Threshold", .25, .8, .45, .01)
     stride = st.slider("Process every Nth frame", 1, 5, 1)
 
@@ -47,7 +47,7 @@ if upload and st.button("Process video", type="primary"):
         writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         if not writer.isOpened():
             raise RuntimeError("OpenCV could not initialize the MP4 output writer on this machine.")
-        object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
+        object_mode = "hybrid" if model_label.startswith("Extended") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
                                      tracking=True, confidence=confidence, iou_threshold=iou_threshold,

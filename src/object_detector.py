@@ -19,8 +19,42 @@ from .config import (
 )
 
 
-CUSTOM_PROMPTS = ("ballpoint pen", "earbuds", "headphones")
-CUSTOM_LABELS = {"ballpoint pen": "pen", "earbuds": "earbuds", "headphones": "headphones"}
+CUSTOM_PROMPTS = (
+    "bottle",
+    "water bottle",
+    "metal water bottle",
+    "stainless steel bottle",
+    "thermos bottle",
+    "flask",
+    "electric ceiling fan",
+    # A visual description works materially better than the bare COCO-missing
+    # noun for thin pens held in front of a webcam.
+    "long thin pen",
+    "earbuds",
+    "headphones",
+)
+ACCESSORY_PROMPTS = ("long thin pen", "earbuds", "headphones")
+CUSTOM_LABELS = {
+    "bottle": "bottle",
+    "water bottle": "bottle",
+    "metal water bottle": "bottle",
+    "stainless steel bottle": "bottle",
+    "thermos bottle": "bottle",
+    "flask": "bottle",
+    "electric ceiling fan": "fan",
+    "long thin pen": "pen",
+    "earbuds": "earbuds",
+    "headphones": "headphones",
+}
+
+# These are common COCO-only guesses for objects that the targeted World pass
+# can describe more precisely. Suppression only happens when the boxes overlap
+# strongly, so unrelated objects remain visible.
+CUSTOM_OVERRIDES = {
+    "bottle": {"remote", "cell phone", "cup", "vase"},
+    "fan": {"airplane", "umbrella", "clock"},
+    "pen": {"cell phone", "scissors"},
+}
 MODELS = {
     "fast": (YOLO11N_MODEL, 640),
     "accurate": (YOLO11S_MODEL, 960),
@@ -90,7 +124,7 @@ class ObjectDetector:
         confidence: float = 0.35,
         tracking: bool = False,
         iou_threshold: float = 0.50,
-        custom_confidence: float = 0.05,
+        custom_confidence: float = 0.02,
         max_detections: int = 300,
     ) -> list[ObjectDetection]:
         self._validate_frame(frame)
@@ -126,28 +160,114 @@ class ObjectDetector:
                 return standard
 
             custom_kwargs = {
-                **standard_kwargs,
                 "conf": custom_confidence,
-                "imgsz": 1280,
+                "imgsz": 960,
+                "iou": iou_threshold,
                 "max_det": min(max_detections, 100),
+                "verbose": False,
             }
-            custom_kwargs.pop("augment", None)
-            if tracking:
-                custom_results = self.custom_model.track(
-                    **custom_kwargs,
-                    persist=True,
-                    tracker=str(BYTETRACK_EXPERIMENTAL_CONFIG),
-                )
-            else:
-                custom_results = self.custom_model.predict(**custom_kwargs)
+            # Run the full frame independently for large scene objects. Mixing
+            # its aspect ratio with portrait tiles in one batch adds padding
+            # and can erase the weak bottle/fan signals this pass is for.
+            full_result = self.custom_model.predict(source=frame, **custom_kwargs)
             custom = self._parse(
-                custom_results,
+                full_result,
                 self.custom_model,
                 frame.shape[:2],
-                track_offset=1_000_000,
                 detector_source="yolo_world",
             )
+
+            # Two overlapping vertical tiles preserve small-accessory detail.
+            # Large-object detections from tiles are ignored because tile edges
+            # commonly produce partial bottle/fan false positives.
+            tiles = self._custom_tiles(frame)
+            self.custom_model.set_classes(list(ACCESSORY_PROMPTS))
+            try:
+                custom_results = self.custom_model.predict(
+                    source=[tile for tile, _, _ in tiles], **custom_kwargs
+                )
+                for result, (tile, offset_x, offset_y) in zip(custom_results, tiles):
+                    parsed = self._parse(
+                        [result],
+                        self.custom_model,
+                        tile.shape[:2],
+                        detector_source="yolo_world",
+                    )
+                    custom.extend(self._offset_detections(parsed, offset_x, offset_y))
+            finally:
+                # Focused bottle/fan verification below needs the complete
+                # prompt set, and the cached model persists between frames.
+                self.custom_model.set_classes(list(CUSTOM_PROMPTS))
+
+            # Reflective bottles are often localized very well by COCO as a
+            # phone/remote but classified incorrectly in the full scene. Ask
+            # YOLO-World to verify that already-localized region at a lower
+            # threshold; relabel only when the second model agrees.
+            focus_kwargs = {**custom_kwargs, "conf": min(custom_confidence, 0.01)}
+            for standard_item, target_name in self._focus_candidates(standard):
+                x1, y1, x2, y2 = standard_item.box
+                crop = frame[y1:y2, x1:x2]
+                focused_result = self.custom_model.predict(source=crop, **focus_kwargs)
+                focused = self._parse(
+                    focused_result,
+                    self.custom_model,
+                    crop.shape[:2],
+                    detector_source="yolo_world",
+                )
+                confirmations = [item for item in focused if item.name == target_name]
+                if confirmations:
+                    best = max(confirmations, key=lambda item: item.confidence)
+                    custom.append(ObjectDetection(
+                        standard_item.box,
+                        target_name,
+                        best.confidence,
+                        None,
+                        "yolo_world",
+                    ))
+            custom = self._postprocess_custom(custom, frame.shape[:2])
             return self._fuse(standard, custom)
+
+    @staticmethod
+    def _custom_tiles(frame: np.ndarray) -> list[tuple[np.ndarray, int, int]]:
+        """Return overlapping tiles for small open-vocabulary objects."""
+        height, width = frame.shape[:2]
+        if width < int(height * 1.15):
+            return [(frame, 0, 0)]
+        tile_width = max(2, int(round(width * 0.62)))
+        right_start = width - tile_width
+        return [(frame[:, :tile_width], 0, 0), (frame[:, right_start:], right_start, 0)]
+
+    @staticmethod
+    def _offset_detections(
+        detections: list[ObjectDetection], offset_x: int, offset_y: int
+    ) -> list[ObjectDetection]:
+        return [
+            ObjectDetection(
+                (x1 + offset_x, y1 + offset_y, x2 + offset_x, y2 + offset_y),
+                item.name,
+                item.confidence,
+                item.tracking_id,
+                item.detector_source,
+            )
+            for item in detections
+            for x1, y1, x2, y2 in (item.box,)
+        ]
+
+    @staticmethod
+    def _focus_candidates(
+        detections: list[ObjectDetection],
+    ) -> list[tuple[ObjectDetection, str]]:
+        """Return plausible COCO confusions worth a targeted second look."""
+        candidates: list[tuple[ObjectDetection, str]] = []
+        for item in detections:
+            x1, y1, x2, y2 = item.box
+            width, height = max(x2 - x1, 1), max(y2 - y1, 1)
+            elongation = max(width, height) / min(width, height)
+            if item.name in CUSTOM_OVERRIDES["bottle"] and height > width and elongation >= 1.40:
+                candidates.append((item, "bottle"))
+            elif item.name in CUSTOM_OVERRIDES["fan"] and elongation <= 2.20:
+                candidates.append((item, "fan"))
+        return candidates
 
     def reset_tracking(self) -> None:
         """Reset persistent ByteTrack state before a new camera/video source."""
@@ -238,22 +358,67 @@ class ObjectDetector:
         )]
 
     @staticmethod
+    def _postprocess_custom(
+        detections: list[ObjectDetection], frame_shape: tuple[int, int]
+    ) -> list[ObjectDetection]:
+        """Reject implausible shapes from the low-threshold targeted World pass."""
+        frame_height, frame_width = frame_shape
+        frame_area = max(frame_width * frame_height, 1)
+        kept: list[ObjectDetection] = []
+        for item in detections:
+            x1, y1, x2, y2 = item.box
+            width, height = max(x2 - x1, 1), max(y2 - y1, 1)
+            elongation = max(width, height) / min(width, height)
+            area_ratio = (width * height) / frame_area
+
+            # The reflective-flask prompt is intentionally broad. Retaining
+            # only portrait, bottle-like regions removes its common person and
+            # room-sized false positives.
+            if item.name == "bottle" and (
+                height <= width or elongation < 1.40 or area_ratio > 0.15
+            ):
+                continue
+
+            # Ceiling fans span both axes; long thin room edges do not.
+            if item.name == "fan" and (elongation > 2.20 or area_ratio < 0.01):
+                continue
+
+            # Weak predictions around extremely thin frame/UI edges are a
+            # recurring false positive for the open-vocabulary pen prompt.
+            # Strong model evidence remains eligible regardless of shape.
+            if item.name == "pen" and item.confidence < 0.08 and elongation > 8.0:
+                continue
+            kept.append(item)
+        return kept
+
+    @staticmethod
     def _fuse(standard: list[ObjectDetection], custom: list[ObjectDetection]) -> list[ObjectDetection]:
         """Class-aware fusion for the optional open-vocabulary pass."""
         custom_kept: list[ObjectDetection] = []
         for candidate in sorted(custom, key=lambda item: item.confidence, reverse=True):
             if any(
-                candidate.name == other.name and ObjectDetector._iou(candidate.box, other.box) >= 0.50
+                candidate.name == other.name
+                and (
+                    ObjectDetector._iou(candidate.box, other.box) >= 0.50
+                    or ObjectDetector._overlap(candidate.box, other.box) >= 0.65
+                )
                 for other in custom_kept
             ):
                 continue
             custom_kept.append(candidate)
 
+        targeted_regions = [item for item in custom_kept if item.name in {"bottle", "fan"}]
+        custom_kept = [item for item in custom_kept if (
+            item.name in {"bottle", "fan"}
+            or not any(ObjectDetector._overlap(item.box, target.box) >= 0.65 for target in targeted_regions)
+        )]
+
         standard_kept = list(standard)
         for candidate in custom_kept:
-            if candidate.name == "pen":
+            overridden_names = CUSTOM_OVERRIDES.get(candidate.name, set())
+            if overridden_names:
                 standard_kept = [item for item in standard_kept if not (
-                    item.name in {"cell phone", "scissors"}
+                    item.name in overridden_names
                     and ObjectDetector._overlap(item.box, candidate.box) >= 0.65
                 )]
         return standard_kept + custom_kept

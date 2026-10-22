@@ -12,7 +12,7 @@ from .object_detector import ObjectDetector
 from .processor import VisionProcessor
 
 
-OBJECT_DETECTOR_REVISION = "validated-detector-v4"
+OBJECT_DETECTOR_REVISION = "bottle-fan-detector-v7"
 
 
 COMPACT_NAVIGATION = (

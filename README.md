@@ -7,7 +7,7 @@ VisionGuard combines Ultralytics YOLO, ByteTrack, OpenCV YuNet/SFace, Streamlit,
 ## Highlights
 
 - Real-time browser-webcam detection through WebRTC
-- Strict YOLO11 detection across all 80 COCO classes with configurable confidence and NMS IoU
+- YOLO11 detection across all 80 COCO classes plus an extended YOLO-World pass for fans, metal bottles, pens, earbuds, and headphones
 - Separate experimental YOLO-World detections for pens, earbuds, and headphones
 - Persistent ByteTrack IDs for moving objects
 - Dedicated YuNet face detection independent of person boxes
@@ -140,7 +140,7 @@ SQLAlchemy creates the SQLite file and tables automatically. Queries are paramet
 
 ## How detection works
 
-YOLO11 detects COCO objects and can pass detections to ByteTrack, whose IDs persist across adjacent frames. In Experimental mode, a separate YOLO-World pass searches only for `ballpoint pen`, `earbuds`, and `headphones`; those events are stored as `yolo_world` rather than being presented as ordinary YOLO11 predictions. YuNet separately locates faces and five landmarks. SFace aligns each face, creates a feature vector, and compares it with averaged registered vectors using cosine similarity. The pipeline annotates the frame, applies evidence cooldowns, and returns structured events for SQLite logging.
+YOLO11 detects COCO objects and can pass detections to ByteTrack, whose IDs persist across adjacent frames. In Extended mode, a separate tiled YOLO-World pass searches for targeted open-vocabulary objects, including a visually described `long thin pen`; those events are stored as `yolo_world` rather than being presented as ordinary YOLO11 predictions. YuNet separately locates faces and five landmarks. SFace aligns each face, creates a feature vector, and compares it with averaged registered vectors using cosine similarity. The pipeline annotates the frame, applies evidence cooldowns, and returns structured events for SQLite logging.
 
 Standard YOLO11 COCO weights do **not** contain pen, earbuds, headphones, or wristwatch classes. Confidence changes cannot add missing categories. Accurate and Fast modes therefore report only the labels actually produced by their COCO model. Use Experimental mode for the three configured open-vocabulary categories, and treat its results as less reliable until evaluated on representative labeled data.
 
@@ -148,7 +148,7 @@ Standard YOLO11 COCO weights do **not** contain pen, earbuds, headphones, or wri
 
 - The default `models/yolo11s.pt` runs at 960px and uses test-time augmentation for still images to improve small-object recall; `yolo11n` remains available as a faster 640px option.
 - Accurate mode (YOLO11s) is the recommended default for standard COCO objects. Experimental mode adds a separately sourced YOLO-World pass for pens, headphones, and earbuds with class-aware duplicate fusion.
-- Defaults are YOLO11 confidence `0.35`, NMS IoU `0.50`, YOLO-World confidence `0.05`, and up to 300 detections. These are operating defaults, not validated optimums.
+- Defaults are YOLO11 confidence `0.35`, NMS IoU `0.50`, YOLO-World confidence `0.02`, and up to 300 detections. These are operating defaults, not validated optimums.
 - Live Fast mode scales frames to at most 960 px; Accurate and Experimental modes retain up to 1280 px before model letterboxing.
 - Video frame stride can trade temporal detail for speed.
 - Resource caching prevents model reinitialization on Streamlit reruns.

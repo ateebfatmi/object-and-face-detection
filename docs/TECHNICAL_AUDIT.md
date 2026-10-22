@@ -27,7 +27,7 @@ Audit date: 2026-10-22
 ## Suspected issues requiring labeled tests
 
 - The best confidence, IoU, and input-size settings vary by camera, lighting, and object scale.
-- YOLO-World prompt quality for `ballpoint pen`, `earbuds`, and `headphones` requires a representative labeled image set.
+- YOLO-World prompt quality for `bottle`, `stainless steel bottle`, `electric ceiling fan`, `long thin pen`, `earbuds`, and `headphones` requires a representative labeled image set. Wide frames are evaluated as two overlapping vertical tiles so narrow objects retain more pixels; tile detections are fused in full-frame coordinates.
 - Face-recognition threshold `0.45` requires genuine/impostor validation using consented data from the target camera domain.
 - Frame skipping can reduce temporal recall and cause unannotated frames in exported videos; stride 1 remains the accuracy default.
 
@@ -61,9 +61,9 @@ Verified checkpoint SHA-256 values:
 |---|---|---:|---|---|
 | Fast | YOLO11n COCO | 640 | No | None |
 | Accurate | YOLO11s COCO | 960 | Yes | None |
-| Experimental | YOLO11s COCO | 960 | No while tracking | YOLO-World v2 at 1280 |
+| Extended | YOLO11s COCO | 960 | No while tracking | YOLO-World v2 on overlapping 960px tiles for fans, bottles, and accessories |
 
-Defaults are YOLO11 confidence `0.35`, NMS IoU `0.50`, and YOLO-World confidence `0.05`. These are operating defaults, not validated optimums.
+Defaults are YOLO11 confidence `0.35`, NMS IoU `0.50`, and YOLO-World confidence `0.02`. These are operating defaults, not validated optimums.
 
 ## Priority plan completed
 

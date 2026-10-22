@@ -56,6 +56,7 @@ class Detection(Base):
     recognized_person: Mapped[str | None] = mapped_column(String(160), index=True)
     recognition_confidence: Mapped[float | None] = mapped_column(Float)
     image_path: Mapped[str | None] = mapped_column(String(500))
+    detector_source: Mapped[str | None] = mapped_column(String(40), index=True)
 
 
 class Database:
@@ -63,7 +64,27 @@ class Database:
         ensure_directories()
         self.engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
         Base.metadata.create_all(self.engine)
+        self._migrate_schema()
         self.SessionLocal = sessionmaker(self.engine, expire_on_commit=False)
+
+    def _migrate_schema(self) -> None:
+        """Apply small backward-compatible SQLite migrations in place."""
+        with self.engine.begin() as connection:
+            columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(detections)")}
+            if "detector_source" not in columns:
+                connection.exec_driver_sql("ALTER TABLE detections ADD COLUMN detector_source VARCHAR(40)")
+            if "object_type" in columns:
+                connection.exec_driver_sql(
+                    """UPDATE detections
+                       SET detector_source = CASE
+                           WHEN object_type = 'face' THEN 'legacy_face'
+                           ELSE 'legacy_object'
+                       END
+                       WHERE detector_source IS NULL"""
+                )
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_detections_detector_source ON detections (detector_source)"
+            )
 
     @contextmanager
     def session(self) -> Iterator[Session]:
@@ -127,6 +148,7 @@ class Database:
     def detections_frame(self) -> pd.DataFrame:
         query = """SELECT d.id, d.timestamp, d.object_type, d.object_name, d.confidence,
                    d.tracking_id, d.recognized_person, d.recognition_confidence, d.image_path,
+                   d.detector_source,
                    s.session_type, d.session_id FROM detections d
                    JOIN detection_sessions s ON s.id=d.session_id ORDER BY d.timestamp DESC"""
         return pd.read_sql(query, self.engine)

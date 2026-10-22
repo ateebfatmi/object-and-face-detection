@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import streamlit as st
 
 from .config import ROOT
@@ -10,7 +12,7 @@ from .object_detector import ObjectDetector
 from .processor import VisionProcessor
 
 
-OBJECT_DETECTOR_REVISION = "pen-refinement-v2"
+OBJECT_DETECTOR_REVISION = "validated-detector-v4"
 
 
 COMPACT_NAVIGATION = (
@@ -63,10 +65,14 @@ def get_database() -> Database:
 
 
 @st.cache_resource(show_spinner="Loading object-detection model…")
-def get_object_detector(mode: str = "accurate", revision: str = OBJECT_DETECTOR_REVISION) -> ObjectDetector:
-    # ``revision`` is part of Streamlit's cache key. Bump it whenever detector
-    # post-processing changes so a live app cannot retain stale model logic.
-    _ = revision
+def get_object_detector(
+    mode: str = "accurate",
+    revision: str = OBJECT_DETECTOR_REVISION,
+    session_key: str = "standalone",
+) -> ObjectDetector:
+    # ``revision`` and ``session_key`` are cache-key fields. The latter keeps
+    # mutable ByteTrack state isolated between browser sessions.
+    _ = revision, session_key
     return ObjectDetector(mode)
 
 
@@ -81,7 +87,11 @@ def get_face_recognizer() -> FaceRecognizer:
 
 
 def get_processor(objects: bool = True, faces: bool = True, object_mode: str = "accurate") -> VisionProcessor:
-    return VisionProcessor(get_object_detector(object_mode, OBJECT_DETECTOR_REVISION) if objects else None, get_face_detector() if faces else None,
+    if "visionguard_detector_session" not in st.session_state:
+        st.session_state.visionguard_detector_session = uuid.uuid4().hex
+    session_key = str(st.session_state.visionguard_detector_session)
+    detector = get_object_detector(object_mode, OBJECT_DETECTOR_REVISION, session_key) if objects else None
+    return VisionProcessor(detector, get_face_detector() if faces else None,
                            get_face_recognizer() if faces else None)
 
 

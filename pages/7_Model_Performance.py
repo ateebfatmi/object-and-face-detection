@@ -8,6 +8,8 @@ import cv2
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import torch
+import ultralytics
 
 from src.config import MODELS_DIR, DetectionSettings
 from src.performance import classification_report, summarize_benchmark
@@ -38,6 +40,9 @@ right.markdown(f"""
 - Processor: `{platform.machine()}`
 - Python: `{platform.python_version()}`
 - OpenCV: `{cv2.__version__}`
+- Ultralytics: `{ultralytics.__version__}`
+- PyTorch: `{torch.__version__}`
+- Acceleration: `{'CUDA' if torch.cuda.is_available() else 'MPS' if torch.backends.mps.is_available() else 'CPU'}`
 """)
 
 st.subheader("Local inference benchmark")
@@ -47,7 +52,8 @@ with controls:
     model_label = st.selectbox("Object model", ["Accurate - YOLO11s", "Fast - YOLO11n", "Experimental - YOLO11s + YOLO-World"])
     include_faces = st.toggle("Include face pipeline", True)
     runs = st.slider("Measured runs", 1, 10, 3)
-    confidence = st.slider("Confidence threshold", .1, .95, .25, .05)
+    confidence = st.slider("Confidence threshold", .1, .95, .35, .05)
+    iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05)
 with uploader:
     upload = st.file_uploader("Benchmark image", type=["jpg", "jpeg", "png", "webp"])
 
@@ -58,7 +64,8 @@ if upload and st.button("Run benchmark", type="primary"):
         processor = get_processor(True, include_faces, mode)
         settings = DetectionSettings(object_detection=True, face_detection=include_faces,
                                      face_recognition=include_faces, tracking=False,
-                                     confidence=confidence, max_width=1440 if mode == "hybrid" else 960)
+                                     confidence=confidence, iou_threshold=iou_threshold,
+                                     max_width=1440 if mode == "hybrid" else 960)
         with st.spinner("Warming up models and measuring inference…"):
             processor.process(image, settings)
             durations, output, last_stats = [], image, {}
@@ -110,4 +117,7 @@ with st.expander("How to report mAP correctly"):
     ground-truth bounding boxes, predicted boxes, confidence scores, and an IoU threshold. Use Ultralytics validation
     on a YOLO-format dataset and report the dataset, split, image count, IoU settings, precision, recall, mAP50, and
     mAP50–95. Until that experiment is performed, label those values as **not evaluated**, not zero.
+
+    Use `scripts/evaluate_object_detection.py` with the documented `evaluation/dataset.example.yaml` structure to
+    generate reproducible JSON results. The current repository contains no labeled held-out dataset.
     """)

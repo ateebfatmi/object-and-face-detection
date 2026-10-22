@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
-
 import cv2
 import streamlit as st
 
@@ -17,7 +15,10 @@ with st.sidebar:
     model_label = st.selectbox("Object model", ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"], disabled=not objects, key="image_object_model_v5")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
-    confidence = st.slider("Confidence Threshold", .1, .95, .4, .05)
+    confidence = st.slider("YOLO11 confidence", .1, .95, .35, .05)
+    iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05)
+    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .05, .01,
+                                  disabled=not model_label.startswith("Experimental"))
     face_threshold = st.slider("Face Recognition Threshold", .25, .8, .45, .01)
 
 upload = st.file_uploader("Upload JPG, PNG, or WEBP", type=["jpg", "jpeg", "png", "webp"])
@@ -27,7 +28,8 @@ if upload:
         object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
-                                     tracking=False, confidence=confidence, face_threshold=face_threshold)
+                                     tracking=False, confidence=confidence, iou_threshold=iou_threshold,
+                                     custom_confidence=custom_confidence, face_threshold=face_threshold)
         session_id = get_database().start_session("image")
         processed, stats, logs = processor.process(original, settings)
         get_database().log_detections(session_id, logs)

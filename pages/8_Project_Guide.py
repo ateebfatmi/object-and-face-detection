@@ -13,11 +13,12 @@ st.write("VisionGuard AI demonstrates how computer vision can automate object mo
 st.subheader("Processing pipeline")
 st.markdown("""
 1. A webcam, image, or video supplies frames.
-2. YOLO detects objects; ByteTrack assigns persistent IDs in video.
-3. YuNet detects faces independently of YOLO person boxes.
-4. SFace creates an embedding and compares it with locally registered embeddings.
-5. OpenCV draws labels; selected evidence and event metadata are stored locally.
-6. SQLite data is aggregated into history and Plotly analytics.
+2. YOLO11 detects supported COCO objects; optional YOLO-World prompts cover experimental accessory classes.
+3. ByteTrack assigns persistent IDs in video and resets for each new source.
+4. YuNet detects faces independently of YOLO person boxes.
+5. SFace creates an embedding and compares it with locally registered embeddings.
+6. OpenCV draws labels; selected evidence and detector provenance are stored locally.
+7. SQLite data is aggregated into history and Plotly analytics.
 """)
 
 st.subheader("Recommended live demonstration")
@@ -56,6 +57,8 @@ left.markdown("""
 - Recognition quality changes with pose and lighting
 - Tracking IDs can change after long occlusion
 - Uploaded-video codec support varies by machine
+- Standard YOLO11 cannot recognize categories outside its 80 COCO classes
+- Experimental YOLO-World prompts require labeled validation before accuracy claims
 """)
 right.markdown("""
 **Reasonable future scope**

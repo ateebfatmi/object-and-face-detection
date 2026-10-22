@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import shutil
-
 import pandas as pd
 import streamlit as st
 
@@ -17,12 +15,13 @@ else:
     df["timestamp"] = pd.to_datetime(df.timestamp)
     min_date, max_date = df.timestamp.dt.date.min(), df.timestamp.dt.date.max()
     date_filter = st.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     type_filter = c1.multiselect("Type", sorted(df.object_type.dropna().unique()))
     object_filter = c2.multiselect("Object", sorted(df.object_name.dropna().unique()))
     session_filter = c3.multiselect("Session", sorted(df.session_type.dropna().unique()))
     identity_filter = c4.multiselect("Identity", sorted(df.recognized_person.dropna().unique()))
     face_status = c5.selectbox("Face status", ["All", "Known", "Unknown"])
+    source_filter = c6.multiselect("Detector", sorted(df.detector_source.dropna().unique()))
     filtered = df.copy()
     if isinstance(date_filter, tuple) and len(date_filter) == 2:
         filtered = filtered[filtered.timestamp.dt.date.between(date_filter[0], date_filter[1])]
@@ -30,6 +29,7 @@ else:
     if object_filter: filtered = filtered[filtered.object_name.isin(object_filter)]
     if session_filter: filtered = filtered[filtered.session_type.isin(session_filter)]
     if identity_filter: filtered = filtered[filtered.recognized_person.isin(identity_filter)]
+    if source_filter: filtered = filtered[filtered.detector_source.isin(source_filter)]
     if face_status == "Known": filtered = filtered[(filtered.object_type == "face") & (~filtered.recognized_person.isin([None, "Unknown"]))]
     elif face_status == "Unknown": filtered = filtered[(filtered.object_type == "face") & (filtered.recognized_person == "Unknown")]
     filtered["confidence"] = filtered.confidence.map(lambda x: f"{x:.1%}")

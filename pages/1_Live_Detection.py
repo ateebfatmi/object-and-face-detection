@@ -21,7 +21,7 @@ with st.sidebar:
     model_label = st.selectbox(
         "Object model",
         ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"],
-        help="Accurate is recommended. Experimental adds a filtered open-vocabulary pass for pens, headphones, and earbuds, but may be less reliable.",
+        help="Accurate is recommended for COCO classes. Experimental adds a separately sourced YOLO-World pass for pens, headphones, and earbuds.",
         disabled=not object_on,
         key="object_model_v3",
     )
@@ -30,15 +30,21 @@ with st.sidebar:
     tracking_on = st.toggle("Object Tracking", True, disabled=not object_on)
     save_unknown = st.toggle("Save Unknown Faces", False)
     evidence_on = st.toggle("Capture Screenshots", False)
-    confidence = st.slider("Confidence Threshold", .1, .95, .40, .05,
-                           help="0.40 prioritizes correct labels. Lower it only when you need more small or partly hidden objects.")
+    confidence = st.slider("YOLO11 confidence", .1, .95, .35, .05,
+                           help="Raise this to reduce false positives; lower it to recover small or occluded COCO objects.")
+    iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05,
+                              help="Controls suppression of overlapping boxes. It does not change the supported classes.")
+    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .05, .01,
+                                  disabled=not model_label.startswith("Experimental"),
+                                  help="Experimental open-vocabulary scores are not calibrated like YOLO11 scores.")
     face_threshold = st.slider("Face Recognition Threshold", .25, .80, .45, .01)
     triggers = set(st.multiselect("Screenshot triggers", ["unknown_person", "cell phone", "laptop", "backpack"], ["unknown_person", "cell phone"]))
 
 settings = DetectionSettings(object_detection=object_on, face_detection=face_on,
                              face_recognition=recognition_on, tracking=tracking_on,
                              save_unknown_faces=save_unknown, capture_screenshots=evidence_on,
-                             confidence=confidence, face_threshold=face_threshold,
+                             confidence=confidence, iou_threshold=iou_threshold,
+                             custom_confidence=custom_confidence, face_threshold=face_threshold,
                              max_width=960 if model_label.startswith("Fast") else 1280)
 object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
 
@@ -58,6 +64,7 @@ class VideoProcessor:
         self.last_log = 0.0
         self.database = Database()
         self.session_id = self.database.start_session("live")
+        processor.reset_tracking()
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
         image = frame.to_ndarray(format="bgr24")

@@ -63,5 +63,6 @@ else:
     recent = df.head(8).copy()
     recent["identity"] = recent.recognized_person.fillna("—")
     recent["confidence"] = recent.confidence.map(lambda x: f"{x:.0%}")
-    st.dataframe(recent[["timestamp", "object_type", "object_name", "confidence", "identity"]],
+    recent["detector"] = recent.detector_source.fillna("legacy")
+    st.dataframe(recent[["timestamp", "object_type", "object_name", "confidence", "detector", "identity"]],
                  width="stretch", hide_index=True)

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
-from pathlib import Path
 from time import perf_counter
 
 import cv2
@@ -24,6 +23,10 @@ class VisionProcessor:
         self.unknown_cooldown = Cooldown(12)
         self.evidence_cooldown = Cooldown(10)
 
+    def reset_tracking(self) -> None:
+        if self.objects:
+            self.objects.reset_tracking()
+
     def process(self, frame: np.ndarray, settings: DetectionSettings,
                 evidence_classes: set[str] | None = None) -> tuple[np.ndarray, dict, list[dict]]:
         started_at = perf_counter()
@@ -34,12 +37,20 @@ class VisionProcessor:
         face_rows: list[tuple] = []
         logs: list[dict] = []
         if settings.object_detection and self.objects:
-            object_items = self.objects.detect(work, settings.confidence, settings.tracking)
+            object_items = self.objects.detect(
+                work,
+                settings.confidence,
+                settings.tracking,
+                iou_threshold=settings.iou_threshold,
+                custom_confidence=settings.custom_confidence,
+                max_detections=settings.max_detections,
+            )
             self.objects.draw(annotated, object_items)
             for item in object_items:
                 logs.append({"object_type": "object", "object_name": item.name, "confidence": item.confidence,
                              "tracking_id": item.tracking_id, "recognized_person": None,
-                             "recognition_confidence": None, "image_path": None})
+                             "recognition_confidence": None, "image_path": None,
+                             "detector_source": item.detector_source})
         if settings.face_detection and self.faces:
             for face in self.faces.detect(work):
                 match = FaceMatch("Face", 0, False)
@@ -59,7 +70,8 @@ class VisionProcessor:
                 logs.append({"object_type": "face", "object_name": "person", "confidence": face.confidence,
                              "tracking_id": None, "recognized_person": match.name if settings.face_recognition else None,
                              "recognition_confidence": match.similarity if settings.face_recognition else None,
-                             "image_path": str(saved_path) if saved_path else None})
+                             "image_path": str(saved_path) if saved_path else None,
+                             "detector_source": "yunet"})
         triggers = set(evidence_classes or ())
         present = {x.name for x in object_items}
         if any(not m.known for _, m in face_rows): present.add("unknown_person")

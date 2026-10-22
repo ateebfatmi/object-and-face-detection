@@ -14,6 +14,12 @@ MODELS_DIR = ROOT / "models"
 DATABASE_DIR = ROOT / "database"
 DATABASE_PATH = DATABASE_DIR / "visionguard.db"
 
+YOLO11N_MODEL = MODELS_DIR / "yolo11n.pt"
+YOLO11S_MODEL = MODELS_DIR / "yolo11s.pt"
+YOLO_WORLD_MODEL = MODELS_DIR / "yolov8s-worldv2.pt"
+BYTETRACK_CONFIG = MODELS_DIR / "bytetrack.yaml"
+BYTETRACK_EXPERIMENTAL_CONFIG = MODELS_DIR / "bytetrack_extended.yaml"
+
 YUNET_MODEL = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
 SFACE_MODEL = MODELS_DIR / "face_recognition_sface_2021dec.onnx"
 YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
@@ -36,7 +42,10 @@ class DetectionSettings:
     tracking: bool = True
     save_unknown_faces: bool = False
     capture_screenshots: bool = False
-    confidence: float = 0.4
+    confidence: float = 0.35
+    iou_threshold: float = 0.5
+    custom_confidence: float = 0.05
+    max_detections: int = 300
     face_threshold: float = 0.45
     # Preserve detail for small objects before YOLO performs its own letterbox
     # resize. Individual real-time views can still select a smaller width.

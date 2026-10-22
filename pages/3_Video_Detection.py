@@ -20,13 +20,18 @@ with st.sidebar:
     model_label = st.selectbox("Object model", ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"], disabled=not objects, key="video_object_model_v5")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
-    confidence = st.slider("Confidence Threshold", .1, .95, .4, .05)
+    confidence = st.slider("YOLO11 confidence", .1, .95, .35, .05)
+    iou_threshold = st.slider("NMS IoU threshold", .3, .8, .50, .05)
+    custom_confidence = st.slider("YOLO-World confidence", .01, .50, .05, .01,
+                                  disabled=not model_label.startswith("Experimental"))
     face_threshold = st.slider("Face Recognition Threshold", .25, .8, .45, .01)
     stride = st.slider("Process every Nth frame", 1, 5, 1)
 
 upload = st.file_uploader("Upload MP4, MOV, AVI, or MKV", type=["mp4", "mov", "avi", "mkv"])
 if upload and st.button("Process video", type="primary"):
     temp_path = None
+    capture = None
+    writer = None
     started_at = time.perf_counter()
     try:
         suffix = Path(upload.name).suffix.lower()
@@ -40,10 +45,15 @@ if upload and st.button("Process video", type="primary"):
         width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         output_path = PROCESSED_DIR / f"processed_{Path(upload.name).stem}.mp4"
         writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if not writer.isOpened():
+            raise RuntimeError("OpenCV could not initialize the MP4 output writer on this machine.")
         object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
-                                     tracking=True, confidence=confidence, face_threshold=face_threshold, max_width=width)
+                                     tracking=True, confidence=confidence, iou_threshold=iou_threshold,
+                                     custom_confidence=custom_confidence,
+                                     face_threshold=face_threshold, max_width=width)
+        processor.reset_tracking()
         session_id = get_database().start_session("video")
         progress, status = st.progress(0), st.empty()
         frame_no, aggregate, batch = 0, Counter(), []
@@ -76,4 +86,8 @@ if upload and st.button("Process video", type="primary"):
     except Exception as exc:
         show_processing_error("Video processing", exc)
     finally:
+        if capture is not None:
+            capture.release()
+        if writer is not None:
+            writer.release()
         if temp_path and temp_path.exists(): temp_path.unlink(missing_ok=True)

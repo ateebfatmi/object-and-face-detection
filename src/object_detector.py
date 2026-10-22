@@ -1,13 +1,31 @@
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
-from .config import MODELS_DIR, ensure_directories
+from .config import (
+    BYTETRACK_CONFIG,
+    BYTETRACK_EXPERIMENTAL_CONFIG,
+    YOLO11N_MODEL,
+    YOLO11S_MODEL,
+    YOLO_WORLD_MODEL,
+    ensure_directories,
+)
+
+
+CUSTOM_PROMPTS = ("ballpoint pen", "earbuds", "headphones")
+CUSTOM_LABELS = {"ballpoint pen": "pen", "earbuds": "earbuds", "headphones": "headphones"}
+MODELS = {
+    "fast": (YOLO11N_MODEL, 640),
+    "accurate": (YOLO11S_MODEL, 960),
+    "hybrid": (YOLO11S_MODEL, 960),
+}
 
 
 @dataclass(slots=True)
@@ -16,116 +34,201 @@ class ObjectDetection:
     name: str
     confidence: float
     tracking_id: int | None = None
+    detector_source: str = "yolo11"
 
 
 class ObjectDetector:
+    """Validated YOLO11 detector with an optional, clearly separated YOLO-World pass."""
+
     def __init__(self, mode: str = "accurate") -> None:
         from ultralytics import YOLO, YOLOWorld
-        ensure_directories()
-        self.custom_model = None
-        if mode in {"hybrid", "extended"}:
-            self.model = YOLO(str(MODELS_DIR / "yolo11s.pt"))
-            self.custom_model = YOLOWorld(str(MODELS_DIR / "yolov8s-worldv2.pt"))
-            self.custom_model.set_classes([
-                "headphones", "earbuds", "ballpoint pen", "pen held in hand",
-            ])
-        elif mode == "fast":
-            self.model = YOLO(str(MODELS_DIR / "yolo11n.pt"))
-        else:
-            self.model = YOLO(str(MODELS_DIR / "yolo11s.pt"))
-        self.mode = mode
-        # The old fixed 768px inference size discarded detail even when the
-        # user selected the larger model. Keep the fast profile inexpensive,
-        # while giving the accurate profiles enough pixels for small objects.
-        self.inference_size = 640 if mode == "fast" else 960
-        self.lock = threading.Lock()
 
-    def detect(self, frame: np.ndarray, confidence: float = 0.5, tracking: bool = False) -> list[ObjectDetection]:
+        ensure_directories()
+        if mode not in MODELS:
+            choices = ", ".join(sorted(MODELS))
+            raise ValueError(f"Unknown object detector mode {mode!r}. Expected one of: {choices}.")
+
+        model_path, self.inference_size = MODELS[mode]
+        self._require_file(model_path, f"{mode} YOLO11 weights")
+        self._require_file(BYTETRACK_CONFIG, "ByteTrack configuration")
+        self.model = YOLO(str(model_path))
+        self._validate_standard_model()
+
+        self.custom_model = None
+        if mode == "hybrid":
+            self._require_file(YOLO_WORLD_MODEL, "YOLO-World weights")
+            self._require_file(BYTETRACK_EXPERIMENTAL_CONFIG, "experimental ByteTrack configuration")
+            self.custom_model = YOLOWorld(str(YOLO_WORLD_MODEL))
+            self.custom_model.set_classes(list(CUSTOM_PROMPTS))
+
+        self.mode = mode
+        self.model_path = model_path
+        self.lock = threading.RLock()
+
+    @staticmethod
+    def _require_file(path: Path, role: str) -> None:
+        if not path.is_file() or path.stat().st_size == 0:
+            raise FileNotFoundError(f"Missing {role}: {path}. The application will not silently switch models.")
+
+    def _validate_standard_model(self) -> None:
+        names = self.model.names
+        if self.model.task != "detect" or len(names) != 80 or str(names.get(0)) != "person":
+            raise RuntimeError("The selected YOLO11 checkpoint is not the expected 80-class COCO detection model.")
+
+    @staticmethod
+    def _validate_frame(frame: np.ndarray) -> None:
+        if not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[2] != 3:
+            raise ValueError("Object detection expects a three-channel OpenCV BGR image.")
+        if frame.size == 0 or frame.shape[0] < 2 or frame.shape[1] < 2:
+            raise ValueError("Object detection received an empty image.")
+        if frame.dtype != np.uint8:
+            raise ValueError("Object detection expects uint8 pixels in the 0-255 range.")
+
+    def detect(
+        self,
+        frame: np.ndarray,
+        confidence: float = 0.35,
+        tracking: bool = False,
+        iou_threshold: float = 0.50,
+        custom_confidence: float = 0.05,
+        max_detections: int = 300,
+    ) -> list[ObjectDetection]:
+        self._validate_frame(frame)
+        if not 0 < confidence <= 1 or not 0 < iou_threshold <= 1:
+            raise ValueError("Confidence and IoU thresholds must be in the interval (0, 1].")
+        if not 0 < custom_confidence <= 1 or max_detections < 1:
+            raise ValueError("Experimental confidence must be in (0, 1] and max detections must be positive.")
+
         standard_kwargs: dict[str, Any] = {
             "source": frame,
             "conf": confidence,
             "imgsz": self.inference_size,
-            "iou": 0.50,
-            "max_det": 300,
+            "iou": iou_threshold,
+            "max_det": max_detections,
             "verbose": False,
         }
-        # Test-time augmentation improves recall for a single uploaded image.
-        # It is deliberately disabled for tracking, where stable boxes and
-        # frame rate matter more than the small recall gain.
+        # TTA is useful for single images, but unstable boxes and extra latency
+        # make it inappropriate for ByteTrack video streams.
         if self.mode == "accurate" and not tracking:
             standard_kwargs["augment"] = True
+
         with self.lock:
-            results = self.model.track(**standard_kwargs, persist=True, tracker="bytetrack.yaml") if tracking else self.model.predict(**standard_kwargs)
-            detections = self._filter_standard(self._parse(results, self.model), frame.shape[:2])
-            detections = self._resolve_watch_phone_conflicts(detections)
-            if self.custom_model is not None:
-                # YOLO-World scores are lower than closed-set COCO scores, but
-                # accepting 0.02 produced obvious false positives and stacks of
-                # competing prompt boxes. Keep a conservative retrieval floor,
-                # then apply class/shape validation below.
-                custom_kwargs = {**standard_kwargs, "conf": 0.04, "imgsz": 1280, "iou": 0.40, "max_det": 40}
-                custom_tracker = str(MODELS_DIR / "bytetrack_extended.yaml")
-                custom_results = (self.custom_model.track(**custom_kwargs, persist=True, tracker=custom_tracker)
-                                  if tracking else self.custom_model.predict(**custom_kwargs))
-                custom = self._parse(custom_results, self.custom_model, track_offset=1_000_000)
-                custom = self._filter_custom(custom, frame.shape[:2])
-                custom = self._remove_overlaps(custom, detections)
-                detections = self._resolve_pen_scissors_conflicts(detections, custom)
-                detections.extend(custom)
+            if tracking:
+                results = self.model.track(
+                    **standard_kwargs, persist=True, tracker=str(BYTETRACK_CONFIG)
+                )
+            else:
+                results = self.model.predict(**standard_kwargs)
+            standard = self._parse(results, self.model, frame.shape[:2], detector_source="yolo11")
+            standard = self._postprocess_standard(standard, frame.shape[:2])
+
+            if self.custom_model is None:
+                return standard
+
+            custom_kwargs = {
+                **standard_kwargs,
+                "conf": custom_confidence,
+                "imgsz": 1280,
+                "max_det": min(max_detections, 100),
+            }
+            custom_kwargs.pop("augment", None)
+            if tracking:
+                custom_results = self.custom_model.track(
+                    **custom_kwargs,
+                    persist=True,
+                    tracker=str(BYTETRACK_EXPERIMENTAL_CONFIG),
+                )
+            else:
+                custom_results = self.custom_model.predict(**custom_kwargs)
+            custom = self._parse(
+                custom_results,
+                self.custom_model,
+                frame.shape[:2],
+                track_offset=1_000_000,
+                detector_source="yolo_world",
+            )
+            return self._fuse(standard, custom)
+
+    def reset_tracking(self) -> None:
+        """Reset persistent ByteTrack state before a new camera/video source."""
+        with self.lock:
+            for model in (self.model, self.custom_model):
+                predictor = getattr(model, "predictor", None) if model is not None else None
+                trackers = getattr(predictor, "trackers", ()) or ()
+                for tracker in trackers:
+                    reset = getattr(tracker, "reset", None)
+                    if callable(reset):
+                        reset()
+                if predictor is not None and hasattr(predictor, "vid_path"):
+                    predictor.vid_path = [None] * max(len(trackers), 1)
+
+    @staticmethod
+    def _parse(
+        results: Any,
+        model: Any,
+        frame_shape: tuple[int, int],
+        track_offset: int = 0,
+        detector_source: str = "yolo11",
+    ) -> list[ObjectDetection]:
+        detections: list[ObjectDetection] = []
+        if not results or results[0].boxes is None:
+            return detections
+
+        height, width = frame_shape
+        boxes = results[0].boxes
+        ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(boxes)
+        rows = zip(boxes.xyxy.cpu().tolist(), boxes.cls.int().cpu().tolist(), boxes.conf.cpu().tolist(), ids)
+        for xyxy, cls_id, confidence, track_id in rows:
+            if not math.isfinite(float(confidence)) or cls_id not in model.names:
+                continue
+            x1 = min(max(int(round(xyxy[0])), 0), width)
+            y1 = min(max(int(round(xyxy[1])), 0), height)
+            x2 = min(max(int(round(xyxy[2])), 0), width)
+            y2 = min(max(int(round(xyxy[3])), 0), height)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            raw_name = str(model.names[cls_id]).strip().lower()
+            display_name = CUSTOM_LABELS.get(raw_name, raw_name)
+            if track_id is not None:
+                track_id = int(track_id) + track_offset
+            detections.append(ObjectDetection(
+                (x1, y1, x2, y2), display_name, float(confidence), track_id, detector_source
+            ))
         return detections
 
     @staticmethod
-    def _filter_standard(detections: list[ObjectDetection], frame_shape: tuple[int, int]) -> list[ObjectDetection]:
-        """Remove high-frequency COCO confusions with implausible geometry.
-
-        COCO has no pen class. In desk/webcam scenes, a hand holding a pen and
-        the edge of a chair are commonly returned as a portrait-shaped laptop
-        or a very large pair of scissors. These conservative rules only remove
-        those characteristic weak/oversized boxes.
-        """
+    def _postprocess_standard(
+        detections: list[ObjectDetection], frame_shape: tuple[int, int]
+    ) -> list[ObjectDetection]:
+        """Correct conservative, repeatable COCO confusions in webcam scenes."""
         frame_height, frame_width = frame_shape
         frame_area = max(frame_width * frame_height, 1)
-        output: list[ObjectDetection] = []
+        corrected: list[ObjectDetection] = []
         for item in detections:
             x1, y1, x2, y2 = item.box
             width, height = max(x2 - x1, 1), max(y2 - y1, 1)
+            elongation = max(width, height) / min(width, height)
             area_ratio = (width * height) / frame_area
-            if item.name == "laptop" and height > width * 1.25 and item.confidence < 0.60:
-                continue
-            if item.name == "clock":
-                elongation = max(width, height) / min(width, height)
-                # COCO has a clock class but no wristwatch class. A close-up
-                # wristwatch normally produces a small portrait-oriented box,
-                # unlike the near-square box of a wall clock.
-                if height > width and elongation >= 1.25 and area_ratio < 0.08:
-                    output.append(ObjectDetection(item.box, "watch", item.confidence, item.tracking_id))
-                    continue
-            if item.name == "cell phone":
-                elongation = max(width, height) / min(width, height)
-                # Weak, almost-square phone boxes are usually hands, sleeves,
-                # furniture edges, or the wrist around a detected watch.
-                if item.confidence < 0.70 and elongation < 1.45:
-                    continue
-            if item.name == "scissors":
-                elongation = max(width, height) / min(width, height)
-                # COCO does not contain a pen class, so YOLO commonly maps a
-                # tightly boxed pen to its nearest thin handheld class. Real
-                # scissors normally have visible handles and a wider box.
-                if elongation >= 3.0 and area_ratio < 0.06:
-                    output.append(ObjectDetection(item.box, "pen", item.confidence, item.tracking_id))
-                    continue
-                if height > width * 1.60 and area_ratio > 0.08 and item.confidence < 0.85:
-                    continue
-            output.append(item)
-        return output
 
-    @staticmethod
-    def _resolve_watch_phone_conflicts(detections: list[ObjectDetection]) -> list[ObjectDetection]:
-        """Remove a phone hallucination covering the same wristwatch region."""
-        watches = [item for item in detections if item.name == "watch"]
+            # COCO has a clock class but no wristwatch class. A close-up watch
+            # is generally a small portrait box, while a wall clock is close
+            # to square. Preserve the confidence, track, and detector source.
+            if item.name == "clock" and height > width and elongation >= 1.25 and area_ratio < 0.08:
+                corrected.append(ObjectDetection(
+                    item.box, "watch", item.confidence, item.tracking_id, item.detector_source
+                ))
+                continue
+
+            # Weak, nearly square phone boxes are commonly produced by hands,
+            # sleeves, furniture edges, and the wrist around a detected watch.
+            if item.name == "cell phone" and item.confidence < 0.70 and elongation < 1.45:
+                continue
+            corrected.append(item)
+
+        watches = [item for item in corrected if item.name == "watch"]
         if not watches:
-            return detections
-        return [item for item in detections if not (
+            return corrected
+        return [item for item in corrected if not (
             item.name == "cell phone"
             and any(
                 ObjectDetector._overlap(item.box, watch.box) > 0.35
@@ -135,100 +238,60 @@ class ObjectDetector:
         )]
 
     @staticmethod
-    def _parse(results: Any, model: Any, track_offset: int = 0) -> list[ObjectDetection]:
-        detections: list[ObjectDetection] = []
-        if not results or results[0].boxes is None:
-            return detections
-        boxes = results[0].boxes
-        ids = boxes.id.int().cpu().tolist() if boxes.id is not None else [None] * len(boxes)
-        for xyxy, cls_id, conf, track_id in zip(boxes.xyxy.int().cpu().tolist(), boxes.cls.int().cpu().tolist(), boxes.conf.cpu().tolist(), ids):
-            raw_name = str(model.names[cls_id])
-            if "pen" in raw_name:
-                display_name = "pen"
-            elif "scissors" in raw_name:
-                display_name = "scissors"
-            else:
-                display_name = raw_name
-            if track_id is not None:
-                track_id += track_offset
-            detections.append(ObjectDetection(tuple(xyxy), display_name, float(conf), track_id))
-        return detections
+    def _fuse(standard: list[ObjectDetection], custom: list[ObjectDetection]) -> list[ObjectDetection]:
+        """Class-aware fusion for the optional open-vocabulary pass."""
+        custom_kept: list[ObjectDetection] = []
+        for candidate in sorted(custom, key=lambda item: item.confidence, reverse=True):
+            if any(
+                candidate.name == other.name and ObjectDetector._iou(candidate.box, other.box) >= 0.50
+                for other in custom_kept
+            ):
+                continue
+            custom_kept.append(candidate)
 
-    @staticmethod
-    def _remove_overlaps(candidates: list[ObjectDetection], standard: list[ObjectDetection]) -> list[ObjectDetection]:
-        """Suppress duplicate custom boxes while preserving genuinely new classes."""
-        kept: list[ObjectDetection] = []
-        for candidate in sorted(candidates, key=lambda item: item.confidence, reverse=True):
-            # Different text prompts can describe the same custom object.
-            if any(ObjectDetector._overlap(candidate.box, other.box) > 0.45 for other in kept):
-                continue
-            if any(ObjectDetector._overlap(candidate.box, other.box) > 0.60 and candidate.name == other.name
-                   for other in standard):
-                continue
-            kept.append(candidate)
-        return kept
-
-    @staticmethod
-    def _filter_custom(detections: list[ObjectDetection], frame_shape: tuple[int, int] | None = None) -> list[ObjectDetection]:
-        """Reject weak or geometrically implausible open-vocabulary results."""
-        minimum_confidence = {"pen": 0.055, "headphones": 0.08, "earbuds": 0.06}
-        output: list[ObjectDetection] = []
-        for item in detections:
-            if item.confidence < minimum_confidence.get(item.name, 0.08):
-                continue
-            x1, y1, x2, y2 = item.box
-            width, height = max(x2 - x1, 1), max(y2 - y1, 1)
-            elongation = max(width, height) / min(width, height)
-            if frame_shape:
-                frame_height, frame_width = frame_shape
-                area_ratio = (width * height) / max(frame_width * frame_height, 1)
-                # Accessory prompts occasionally latch onto nearly the entire
-                # image. Such a box cannot be a pen, earbud, or headphones.
-                if area_ratio > 0.45:
-                    continue
-            # A pen should be visibly elongated. This removes the large hand,
-            # face, and background regions that YOLO-World sometimes calls pens.
-            if item.name == "pen" and (elongation < 2.4 or max(width, height) < 12):
-                continue
-            output.append(item)
-        return output
-
-    @staticmethod
-    def _resolve_pen_scissors_conflicts(standard: list[ObjectDetection], custom: list[ObjectDetection]) -> list[ObjectDetection]:
-        """Prefer a validated pen over an overlapping COCO scissors false positive."""
-        pens = [item for item in custom if item.name == "pen"]
-        if not pens:
-            return standard
-        return [item for item in standard if not (
-            item.name == "scissors" and item.confidence < 0.50
-            and any(ObjectDetector._overlap(item.box, pen.box) > 0.42 for pen in pens)
-        )]
+        standard_kept = list(standard)
+        for candidate in custom_kept:
+            if candidate.name == "pen":
+                standard_kept = [item for item in standard_kept if not (
+                    item.name in {"cell phone", "scissors"}
+                    and ObjectDetector._overlap(item.box, candidate.box) >= 0.65
+                )]
+        return standard_kept + custom_kept
 
     @staticmethod
     def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-        x1, y1, x2, y2 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        intersection = ObjectDetector._intersection(a, b)
         area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
         area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
         return intersection / max(area_a + area_b - intersection, 1)
 
     @staticmethod
     def _overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-        """Intersection over the smaller box; better than IoU for nested thin objects."""
-        x1, y1, x2, y2 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        """Intersection over the smaller box, useful for nested detections."""
+        intersection = ObjectDetector._intersection(a, b)
         area_a = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
         area_b = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
         return intersection / max(min(area_a, area_b), 1)
 
     @staticmethod
+    def _intersection(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
+        x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+        x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+        return max(0, x2 - x1) * max(0, y2 - y1)
+
+    @staticmethod
     def draw(frame: np.ndarray, detections: list[ObjectDetection]) -> np.ndarray:
         for item in detections:
             x1, y1, x2, y2 = item.box
-            color = (46, 204, 113) if item.name == "person" else (0, 174, 255)
+            if item.detector_source == "yolo_world":
+                color = (255, 190, 70)
+            else:
+                color = (46, 204, 113) if item.name == "person" else (0, 174, 255)
             suffix = f" #{item.tracking_id}" if item.tracking_id is not None else ""
-            label = f"{item.name.title()}{suffix} - {item.confidence:.0%}"
+            source = " · WORLD" if item.detector_source == "yolo_world" else ""
+            label = f"{item.name.title()}{suffix} - {item.confidence:.0%}{source}"
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.rectangle(frame, (x1, max(0, y1 - 26)), (x1 + max(120, len(label) * 8), y1), color, -1)
-            cv2.putText(frame, label, (x1 + 5, y1 - 7), cv2.FONT_HERSHEY_SIMPLEX, .52, (10, 15, 25), 1, cv2.LINE_AA)
+            label_right = min(frame.shape[1], x1 + max(120, len(label) * 8))
+            cv2.rectangle(frame, (x1, max(0, y1 - 26)), (label_right, y1), color, -1)
+            cv2.putText(frame, label, (x1 + 5, max(14, y1 - 7)), cv2.FONT_HERSHEY_SIMPLEX, .52, (10, 15, 25), 1, cv2.LINE_AA)
         return frame

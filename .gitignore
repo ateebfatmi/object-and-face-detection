@@ -16,4 +16,6 @@ data/unknown_faces/*
 data/screenshots/*
 data/uploads/*
 data/processed/*
+evaluation/dataset.yaml
+evaluation/*-results.json
 !data/**/.gitkeep

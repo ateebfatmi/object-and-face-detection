@@ -20,18 +20,18 @@ with st.sidebar:
     object_on = st.toggle("Object Detection", True)
     model_label = st.selectbox(
         "Object model",
-        ["Hybrid - Best overall", "Accurate - Standard objects", "Fast - Lower CPU usage"],
-        help="Hybrid combines YOLO11s with a high-resolution custom pass for pens, scissors, headphones and earbuds.",
+        ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"],
+        help="Accurate is recommended. Experimental adds a filtered open-vocabulary pass for pens, headphones, and earbuds, but may be less reliable.",
         disabled=not object_on,
-        key="object_model_v2",
+        key="object_model_v3",
     )
     face_on = st.toggle("Face Detection", True)
     recognition_on = st.toggle("Face Recognition", True, disabled=not face_on)
     tracking_on = st.toggle("Object Tracking", True, disabled=not object_on)
     save_unknown = st.toggle("Save Unknown Faces", False)
     evidence_on = st.toggle("Capture Screenshots", False)
-    confidence = st.slider("Confidence Threshold", .1, .95, .20, .05,
-                           help="Use 0.20–0.35 for small or partly hidden objects such as bottles.")
+    confidence = st.slider("Confidence Threshold", .1, .95, .40, .05,
+                           help="0.40 prioritizes correct labels. Lower it only when you need more small or partly hidden objects.")
     face_threshold = st.slider("Face Recognition Threshold", .25, .80, .45, .01)
     triggers = set(st.multiselect("Screenshot triggers", ["unknown_person", "cell phone", "laptop", "backpack"], ["unknown_person", "cell phone"]))
 
@@ -39,8 +39,8 @@ settings = DetectionSettings(object_detection=object_on, face_detection=face_on,
                              face_recognition=recognition_on, tracking=tracking_on,
                              save_unknown_faces=save_unknown, capture_screenshots=evidence_on,
                              confidence=confidence, face_threshold=face_threshold,
-                             max_width=1440 if model_label.startswith("Hybrid") else 960)
-object_mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
+                             max_width=960 if model_label.startswith("Fast") else 1280)
+object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
 
 try:
     processor = get_processor(object_on, face_on, object_mode)

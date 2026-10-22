@@ -17,10 +17,10 @@ ensure_directories()
 
 with st.sidebar:
     objects = st.toggle("Object Detection", True)
-    model_label = st.selectbox("Object model", ["Hybrid - Best overall", "Accurate - Standard objects", "Fast - Lower CPU usage"], disabled=not objects, key="video_object_model_v4")
+    model_label = st.selectbox("Object model", ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"], disabled=not objects, key="video_object_model_v5")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
-    confidence = st.slider("Confidence Threshold", .1, .95, .2, .05)
+    confidence = st.slider("Confidence Threshold", .1, .95, .4, .05)
     face_threshold = st.slider("Face Recognition Threshold", .25, .8, .45, .01)
     stride = st.slider("Process every Nth frame", 1, 5, 1)
 
@@ -40,7 +40,7 @@ if upload and st.button("Process video", type="primary"):
         width, height = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         output_path = PROCESSED_DIR / f"processed_{Path(upload.name).stem}.mp4"
         writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        object_mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
+        object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
                                      tracking=True, confidence=confidence, face_threshold=face_threshold, max_width=width)

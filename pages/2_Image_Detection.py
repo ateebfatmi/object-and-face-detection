@@ -14,17 +14,17 @@ hero("Image Detection", "Inspect objects, faces, identities, and confidence scor
 
 with st.sidebar:
     objects = st.toggle("Object Detection", True)
-    model_label = st.selectbox("Object model", ["Hybrid - Best overall", "Accurate - Standard objects", "Fast - Lower CPU usage"], disabled=not objects, key="image_object_model_v4")
+    model_label = st.selectbox("Object model", ["Accurate - Standard objects", "Fast - Lower CPU usage", "Experimental - Pens + accessories"], disabled=not objects, key="image_object_model_v5")
     faces = st.toggle("Face Detection", True)
     recognition = st.toggle("Face Recognition", True, disabled=not faces)
-    confidence = st.slider("Confidence Threshold", .1, .95, .2, .05)
+    confidence = st.slider("Confidence Threshold", .1, .95, .4, .05)
     face_threshold = st.slider("Face Recognition Threshold", .25, .8, .45, .01)
 
 upload = st.file_uploader("Upload JPG, PNG, or WEBP", type=["jpg", "jpeg", "png", "webp"])
 if upload:
     try:
         original = decode_image(upload.getvalue())
-        object_mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
+        object_mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(objects, faces, object_mode)
         settings = DetectionSettings(object_detection=objects, face_detection=faces, face_recognition=recognition,
                                      tracking=False, confidence=confidence, face_threshold=face_threshold)

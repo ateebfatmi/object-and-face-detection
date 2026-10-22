@@ -44,7 +44,7 @@ st.subheader("Local inference benchmark")
 st.caption("Upload a representative image. The first pass warms the model; reported values use only measured runs after warm-up.")
 controls, uploader = st.columns([1, 1.5])
 with controls:
-    model_label = st.selectbox("Object model", ["Fast - YOLO11n", "Accurate - YOLO11s", "Hybrid - YOLO11s + YOLO-World"])
+    model_label = st.selectbox("Object model", ["Accurate - YOLO11s", "Fast - YOLO11n", "Experimental - YOLO11s + YOLO-World"])
     include_faces = st.toggle("Include face pipeline", True)
     runs = st.slider("Measured runs", 1, 10, 3)
     confidence = st.slider("Confidence threshold", .1, .95, .25, .05)
@@ -54,7 +54,7 @@ with uploader:
 if upload and st.button("Run benchmark", type="primary"):
     try:
         image = decode_image(upload.getvalue())
-        mode = "hybrid" if model_label.startswith("Hybrid") else "fast" if model_label.startswith("Fast") else "accurate"
+        mode = "hybrid" if model_label.startswith("Experimental") else "fast" if model_label.startswith("Fast") else "accurate"
         processor = get_processor(True, include_faces, mode)
         settings = DetectionSettings(object_detection=True, face_detection=include_faces,
                                      face_recognition=include_faces, tracking=False,

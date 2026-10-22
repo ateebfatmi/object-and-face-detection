@@ -36,7 +36,9 @@ class DetectionSettings:
     tracking: bool = True
     save_unknown_faces: bool = False
     capture_screenshots: bool = False
-    confidence: float = 0.3
+    confidence: float = 0.4
     face_threshold: float = 0.45
-    max_width: int = 960
+    # Preserve detail for small objects before YOLO performs its own letterbox
+    # resize. Individual real-time views can still select a smaller width.
+    max_width: int = 1440
     frame_stride: int = 1

@@ -10,10 +10,48 @@ from .object_detector import ObjectDetector
 from .processor import VisionProcessor
 
 
+OBJECT_DETECTOR_REVISION = "pen-refinement-v2"
+
+
+COMPACT_NAVIGATION = (
+    ("OVR", (("Dashboard", "/", "dashboard"),)),
+    ("DET", (
+        ("Live Detection", "/Live_Detection", "videocam"),
+        ("Image Detection", "/Image_Detection", "image_search"),
+        ("Video Detection", "/Video_Detection", "movie"),
+    )),
+    ("DATA", (
+        ("Face Registration", "/Face_Registration", "person_add"),
+        ("Analytics", "/Analytics", "monitoring"),
+        ("Detection History", "/Detection_History", "history"),
+    )),
+    ("PRO", (
+        ("Model Performance", "/Model_Performance", "speed"),
+        ("Project Guide", "/Project_Guide", "school"),
+    )),
+)
+
+
+def compact_navigation(active_title: str) -> str:
+    sections: list[str] = []
+    for section, items in COMPACT_NAVIGATION:
+        links = []
+        for title, href, icon in items:
+            active = " active" if title == active_title else ""
+            links.append(
+                f'<a class="vg-mini-link{active}" href="{href}" target="_self" title="{title}" '
+                f'aria-label="{title}"><span class="material-symbols-rounded">{icon}</span></a>'
+            )
+        sections.append(f'<div class="vg-mini-section"><div class="vg-mini-heading">{section}</div>{"".join(links)}</div>')
+    return f'<div class="vg-mini-nav" aria-label="Compact navigation">{"".join(sections)}</div>'
+
+
 def setup_page(title: str, icon: str = "🛡️") -> None:
-    st.set_page_config(page_title=f"{title} · VisionGuard AI", page_icon=icon, layout="wide", initial_sidebar_state="expanded")
+    favicon = ROOT / "assets" / "favicon.svg"
+    st.set_page_config(page_title=f"{title} · VisionGuard AI", page_icon=str(favicon))
     css = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.html(compact_navigation(title))
     logo = ROOT / "assets" / "logo.svg"
     if logo.exists():
         st.logo(str(logo), size="large")
@@ -25,7 +63,10 @@ def get_database() -> Database:
 
 
 @st.cache_resource(show_spinner="Loading object-detection model…")
-def get_object_detector(mode: str = "accurate") -> ObjectDetector:
+def get_object_detector(mode: str = "accurate", revision: str = OBJECT_DETECTOR_REVISION) -> ObjectDetector:
+    # ``revision`` is part of Streamlit's cache key. Bump it whenever detector
+    # post-processing changes so a live app cannot retain stale model logic.
+    _ = revision
     return ObjectDetector(mode)
 
 
@@ -40,7 +81,7 @@ def get_face_recognizer() -> FaceRecognizer:
 
 
 def get_processor(objects: bool = True, faces: bool = True, object_mode: str = "accurate") -> VisionProcessor:
-    return VisionProcessor(get_object_detector(object_mode) if objects else None, get_face_detector() if faces else None,
+    return VisionProcessor(get_object_detector(object_mode, OBJECT_DETECTOR_REVISION) if objects else None, get_face_detector() if faces else None,
                            get_face_recognizer() if faces else None)
 
 

@@ -96,6 +96,7 @@ The default cosine threshold is `0.45`. Raise it to reduce false acceptance; low
 visionguard-ai/
 ├── app.py
 ├── pages/
+│   ├── 0_Dashboard.py
 │   ├── 1_Live_Detection.py
 │   ├── 2_Image_Detection.py
 │   ├── 3_Video_Detection.py
@@ -139,8 +140,8 @@ YOLO detects COCO objects and can pass detections to ByteTrack, whose IDs persis
 
 ## Performance notes
 
-- The default `models/yolo11s.pt` improves small-object accuracy; `yolo11n` remains available as a faster option.
-- Hybrid mode combines YOLO11s for the full standard COCO object set with a focused YOLO-World pass for pens, scissors, headphones, and earbuds. Live Hybrid frames retain up to 1440px and overlapping prompt results are collapsed to one box.
+- The default `models/yolo11s.pt` runs at 960px and uses test-time augmentation for still images to improve small-object recall; `yolo11n` remains available as a faster 640px option.
+- Accurate mode (YOLO11s) is the recommended default for standard COCO objects. Experimental mode adds a filtered YOLO-World pass for pens, headphones, and earbuds; weak, implausible, and overlapping results are removed, but open-vocabulary predictions remain less reliable than trained COCO classes.
 - Live inference scales frames to a maximum width of 960 px.
 - Video frame stride can trade temporal detail for speed.
 - Resource caching prevents model reinitialization on Streamlit reruns.

@@ -1,0 +1,7 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs><linearGradient id="g" x1="5" y1="3" x2="59" y2="62" gradientUnits="userSpaceOnUse"><stop stop-color="#27E6C1"/><stop offset="1" stop-color="#4978FF"/></linearGradient></defs>
+  <rect width="64" height="64" rx="15" fill="#071827"/>
+  <path d="M32 7L54 15.5V30C54 43.5 44.5 54 32 58C19.5 54 10 43.5 10 30V15.5L32 7Z" fill="url(#g)"/>
+  <path d="M17 30C21 22.5 26 19 32 19C38 19 43 22.5 47 30C43 37.5 38 41 32 41C26 41 21 37.5 17 30Z" fill="#071827"/>
+  <circle cx="32" cy="30" r="7" fill="#F4FFFF"/><circle cx="32" cy="30" r="3.2" fill="#21D9BC"/>
+</svg>

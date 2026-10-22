@@ -1,66 +1,40 @@
 from __future__ import annotations
 
-import plotly.express as px
 import streamlit as st
 
-from src.analytics import object_counts, prepare_activity
-from src.ui import get_database, hero, metric_cards, setup_page
+from src.config import ROOT
 
-setup_page("Dashboard")
-db = get_database()
-stats = db.dashboard_stats()
 
-hero("VisionGuard AI", "Intelligent Real-Time Face & Object Detection")
+favicon = ROOT / "assets" / "favicon.svg"
+st.set_page_config(
+    page_title="VisionGuard AI",
+    page_icon=str(favicon),
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-with st.expander("Project overview · objective, method, and scope"):
-    st.markdown("""
-    **Problem statement:** Manual monitoring of people and objects is slow, inconsistent, and difficult to summarize.
+navigation = st.navigation(
+    {
+        "OVERVIEW": [
+            st.Page("pages/0_Dashboard.py", title="Dashboard", icon=":material/dashboard:", default=True),
+        ],
+        "DETECTION": [
+            st.Page("pages/1_Live_Detection.py", title="Live Detection", icon=":material/videocam:"),
+            st.Page("pages/2_Image_Detection.py", title="Image Detection", icon=":material/image_search:"),
+            st.Page("pages/3_Video_Detection.py", title="Video Detection", icon=":material/movie:"),
+        ],
+        "DATA & INSIGHTS": [
+            st.Page("pages/4_Face_Registration.py", title="Face Registration", icon=":material/person_add:"),
+            st.Page("pages/5_Analytics.py", title="Analytics", icon=":material/monitoring:"),
+            st.Page("pages/6_Detection_History.py", title="Detection History", icon=":material/history:"),
+        ],
+        "PROJECT": [
+            st.Page("pages/7_Model_Performance.py", title="Model Performance", icon=":material/speed:"),
+            st.Page("pages/8_Project_Guide.py", title="Project Guide", icon=":material/school:"),
+        ],
+    },
+    position="sidebar",
+    expanded=True,
+)
 
-    **Objective:** Build a privacy-first prototype that detects and tracks common objects, recognizes locally registered
-    faces, stores detection events, and presents useful analytics without sending biometric data to a cloud API.
-
-    **Method:** Frames pass through YOLO object detection and ByteTrack tracking while YuNet detects faces and SFace
-    compares embeddings. Results are annotated, selectively stored in SQLite, and summarized in the dashboard.
-
-    **Academic scope:** This is a demonstration and evaluation system—not a certified identity or access-control product.
-    """)
-metric_cards([
-    ("Unique Tracked Objects", f"{stats['objects']:,}", "◉"),
-    ("Face Observations", f"{stats['faces']:,}", "◎"),
-    ("Recognized Identities", f"{stats['known']:,}", "✓"),
-    ("Unknown Observations", f"{stats['unknown']:,}", "!"),
-    ("Detection Sessions", f"{stats['sessions']:,}", "▦"),
-])
-
-st.subheader("Detection analytics")
-df = db.detections_frame()
-left, right = st.columns([1.35, 1])
-counts = object_counts(df).head(8)
-with left:
-    if counts.empty:
-        st.info("Run a detection session to populate object analytics.")
-    else:
-        fig = px.bar(counts, x="count", y="object_name", orientation="h", color="count",
-                     color_continuous_scale=["#1d4ed8", "#20d7b4"], title="Most observed object classes")
-        fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          coloraxis_showscale=False, yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(fig, use_container_width=True)
-with right:
-    faces = df[df.object_type == "face"] if not df.empty else df
-    if faces.empty:
-        st.info("Known vs unknown face activity will appear here.")
-    else:
-        labels = faces.recognized_person.fillna("Unclassified").apply(lambda x: "Unknown" if x == "Unknown" else "Known").value_counts()
-        fig = px.pie(values=labels.values, names=labels.index, hole=.68, color_discrete_sequence=["#20d7b4", "#ef5466"])
-        fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", legend_orientation="h")
-        st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("Recent activity")
-if df.empty:
-    st.caption("No detections logged yet. Open Live, Image, or Video Detection from the sidebar.")
-else:
-    recent = df.head(8).copy()
-    recent["identity"] = recent.recognized_person.fillna("—")
-    recent["confidence"] = recent.confidence.map(lambda x: f"{x:.0%}")
-    st.dataframe(recent[["timestamp", "object_type", "object_name", "confidence", "identity"]],
-                 use_container_width=True, hide_index=True)
+navigation.run()

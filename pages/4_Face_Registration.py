@@ -6,6 +6,7 @@ import cv2
 import streamlit as st
 from sqlalchemy.exc import IntegrityError
 
+from src.attendance import validate_face_profiles
 from src.ui import get_database, get_face_detector, get_face_recognizer, hero, setup_page
 from src.video_utils import decode_image
 
@@ -71,6 +72,7 @@ def confirm_profile_deletion(person_id: int, person_name: str, identifier: str) 
 
 st.subheader("Registered people")
 people = get_database().people()
+profile_issues = {issue.person_id: issue for issue in validate_face_profiles(people)}
 if not people:
     st.info("No face profiles have been registered.")
 else:
@@ -78,6 +80,8 @@ else:
         a, b, c = st.columns([2, 2, 1])
         a.write(f"**{person.name}**")
         b.caption(f"ID: {person.person_identifier} · {person.email or 'No email'}")
+        if person.id in profile_issues:
+            b.error(f"Face profile unavailable: {profile_issues[person.id].reason}. Delete and re-register this profile.")
         if c.button("Delete", key=f"delete-{person.id}"):
             confirm_profile_deletion(person.id, person.name, person.person_identifier)
 

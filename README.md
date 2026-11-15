@@ -228,6 +228,14 @@ This reports precision, recall, F1, mAP@0.50, mAP@0.50:0.95, per-class results, 
 
 Manual acceptance testing should cover one/multiple/no faces, registered/unknown faces, low light and varied poses, multiple moving objects, corrupt uploads, unavailable cameras, and representative MP4/MOV/AVI/MKV files. Hardware and codec behavior varies, so webcam and output playback should be tested on the demonstration machine.
 
+Run the local attendance verifier after registering or replacing student profiles:
+
+```bash
+.venv/bin/python scripts/verify_attendance_system.py
+```
+
+It checks every stored embedding and reference image with the real YuNet/SFace models, builds a local multi-face class image, verifies duplicate suppression, and exercises reviewed full-class and one-by-one database transactions in a temporary database. A non-zero exit identifies profiles that must be repaired. Attendance capture is disabled in the UI while any roster profile has missing, unreadable, or invalid embedding data; history remains available.
+
 ## Privacy
 
 Face images and embeddings are sensitive biometric data. VisionGuard processes them locally, excludes them from Git, and provides deletion controls. Obtain informed consent, restrict filesystem access, define a retention policy, and check applicable privacy/biometric laws before deployment. Deleting a profile removes its saved images and embedding; History provides separate controls for unknown captures and logs.

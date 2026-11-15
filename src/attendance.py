@@ -29,17 +29,48 @@ class AttendanceAnalysis:
     detected_faces: int
 
 
+@dataclass(frozen=True, slots=True)
+class FaceProfileIssue:
+    person_id: int
+    name: str
+    identifier: str
+    reason: str
+
+
+def _profile_embedding(person: RegisteredPerson) -> tuple[np.ndarray | None, str | None]:
+    if not person.embedding_path:
+        return None, "No embedding is linked"
+    path = Path(person.embedding_path)
+    if not path.is_file():
+        return None, "Embedding file is missing"
+    try:
+        feature = np.load(path, allow_pickle=False).astype(np.float32).reshape(-1)
+    except (OSError, ValueError):
+        return None, "Embedding file is unreadable"
+    if not feature.size or not np.isfinite(feature).all():
+        return None, "Embedding data is invalid"
+    return feature, None
+
+
+def validate_face_profiles(people: Iterable[RegisteredPerson]) -> list[FaceProfileIssue]:
+    issues: list[FaceProfileIssue] = []
+    for person in people:
+        _feature, reason = _profile_embedding(person)
+        if reason:
+            issues.append(FaceProfileIssue(
+                person_id=person.id,
+                name=person.name,
+                identifier=person.person_identifier,
+                reason=reason,
+            ))
+    return issues
+
+
 def _load_candidates(people: Iterable[RegisteredPerson]) -> list[tuple[RegisteredPerson, np.ndarray]]:
     candidates: list[tuple[RegisteredPerson, np.ndarray]] = []
     for person in people:
-        if not person.embedding_path:
-            continue
-        path = Path(person.embedding_path)
-        try:
-            feature = np.load(path).astype(np.float32).reshape(-1)
-        except (OSError, ValueError):
-            continue
-        if feature.size and np.isfinite(feature).all():
+        feature, _reason = _profile_embedding(person)
+        if feature is not None:
             candidates.append((person, feature))
     return candidates
 

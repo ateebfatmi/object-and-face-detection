@@ -74,6 +74,7 @@
 
 - Required names, identifiers, class labels, captures, and one-face constraints use inline validation.
 - Database uniqueness protects student identifiers and one attendance row per student/session.
+- Attendance capture is blocked when any roster face embedding is missing or invalid; history stays available and Face Registration identifies the profile that must be repaired.
 - Face images and embeddings remain local and must never appear in toast/error text as raw data.
 - Automated matches are always reviewable before a session becomes final.
 

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from src.attendance import validate_face_profiles
 from src.database import Database
 from src.face_detector import FaceDetector
 from src.face_recognizer import FaceRecognizer, slugify
@@ -164,6 +165,24 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(settings.configuration_errors(), [])
             self.assertEqual(settings.retention_days, 90)
             self.assertIn("teacher@example.edu", settings.allowed_emails)
+
+    def test_face_profile_validation_reports_missing_and_corrupt_embeddings(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            good_path = root / "good.npy"
+            corrupt_path = root / "corrupt.npy"
+            np.save(good_path, np.array([1.0, 0.0], dtype=np.float32))
+            corrupt_path.write_bytes(b"not-a-numpy-array")
+            people = [
+                types.SimpleNamespace(id=1, name="Ready", person_identifier="001", embedding_path=str(good_path)),
+                types.SimpleNamespace(id=2, name="Missing", person_identifier="002", embedding_path=str(root / "missing.npy")),
+                types.SimpleNamespace(id=3, name="Corrupt", person_identifier="003", embedding_path=str(corrupt_path)),
+            ]
+            issues = validate_face_profiles(people)
+            self.assertEqual(
+                [(issue.identifier, issue.reason) for issue in issues],
+                [("002", "Embedding file is missing"), ("003", "Embedding file is unreadable")],
+            )
 
     def test_benchmark_summary(self) -> None:
         summary = summarize_benchmark([100, 200, 300])

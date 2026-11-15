@@ -7,7 +7,7 @@ import cv2
 import pandas as pd
 import streamlit as st
 
-from src.attendance import analyze_attendance
+from src.attendance import analyze_attendance, validate_face_profiles
 from src.config import ATTENDANCE_DIR, ensure_directories
 from src.security import current_actor
 from src.ui import get_database, get_face_detector, get_face_recognizer, hero, metric_cards, setup_page
@@ -22,6 +22,8 @@ hero(
 
 database = get_database()
 people = database.people()
+profile_issues = validate_face_profiles(people)
+attendance_ready = not profile_issues
 
 with st.sidebar:
     st.subheader("Attendance settings")
@@ -41,10 +43,23 @@ if not people:
     st.stop()
 
 metric_cards([
-    ("Registered students", len(people), "◎"),
+    ("Roster students", len(people), "◎"),
+    ("Face-ready", len(people) - len(profile_issues), "✓"),
     ("Capture modes", 2, "◫"),
     ("Storage", "Local", "⌂"),
 ])
+
+if profile_issues:
+    st.error(f"Attendance capture is paused: {len(profile_issues)} student profile(s) have missing or invalid face data.")
+    st.dataframe(
+        pd.DataFrame([
+            {"Student": issue.name, "Student ID": issue.identifier, "Problem": issue.reason}
+            for issue in profile_issues
+        ]),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.page_link("pages/4_Face_Registration.py", label="Repair profiles in Face Registration", icon="👤")
 
 group_tab, individual_tab, history_tab = st.tabs(["Full class photo", "One by one", "Attendance history"])
 
@@ -115,7 +130,13 @@ with group_tab:
         key=f"group_attendance_upload_{group_capture_number}",
     )
     group_camera = right.camera_input("Or take the class photo", key=f"group_attendance_camera_{group_capture_number}")
-    if st.button("Analyze class photo", type="primary", key="analyze_group_attendance"):
+    if st.button(
+        "Analyze class photo",
+        type="primary",
+        key="analyze_group_attendance",
+        disabled=not attendance_ready,
+        help="Repair every invalid face profile before taking attendance." if not attendance_ready else None,
+    ):
         image = read_capture(group_upload, group_camera)
         if not group_class.strip():
             st.error("Enter the class or section name.")
@@ -242,7 +263,12 @@ with individual_tab:
     )
 
     if active_id is None:
-        if st.button("Begin one-by-one attendance", type="primary"):
+        if st.button(
+            "Begin one-by-one attendance",
+            type="primary",
+            disabled=not attendance_ready,
+            help="Repair every invalid face profile before starting a new session." if not attendance_ready else None,
+        ):
             if not individual_class.strip():
                 st.error("Enter the class or section name.")
             else:

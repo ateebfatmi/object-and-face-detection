@@ -39,7 +39,9 @@ class FaceRecognizer:
                 try:
                     embedding = np.load(file).astype(np.float32).reshape(-1)
                     if embedding.size and np.isfinite(embedding).all():
-                        self.embeddings.append((file.parent.name, embedding))
+                        label_path = file.parent / "display_name.txt"
+                        label = label_path.read_text(encoding="utf-8").strip() if label_path.exists() else file.parent.name.replace("_", " ").title()
+                        self.embeddings.append((label or file.parent.name, embedding))
                 except (OSError, ValueError):
                     continue
 
@@ -58,10 +60,26 @@ class FaceRecognizer:
                 if score > best_score:
                     best_name, best_score = name, score
         known = best_score >= threshold
-        return FaceMatch(best_name.replace("_", " ").title() if known else "Unknown", max(0.0, best_score), known)
+        display_name = best_name.replace("_", " ").title() if best_name == slugify(best_name) else best_name
+        return FaceMatch(display_name if known else "Unknown", max(0.0, best_score), known)
 
-    def register(self, name: str, images: list[np.ndarray], detector: FaceDetector) -> tuple[Path, int]:
-        slug = slugify(name)
+    def similarity(self, feature: np.ndarray, known: np.ndarray) -> float:
+        """Compare two SFace embeddings using the recognizer's cosine metric."""
+        with self.lock:
+            return float(self.recognizer.match(
+                feature.astype(np.float32),
+                known.astype(np.float32),
+                cv2.FaceRecognizerSF_FR_COSINE,
+            ))
+
+    def register(
+        self,
+        name: str,
+        images: list[np.ndarray],
+        detector: FaceDetector,
+        storage_key: str | None = None,
+    ) -> tuple[Path, int]:
+        slug = slugify(storage_key or name)
         person_dir = KNOWN_FACES_DIR / slug
         person_dir.mkdir(parents=True, exist_ok=True)
         features: list[np.ndarray] = []
@@ -78,6 +96,7 @@ class FaceRecognizer:
         embedding = np.mean(np.stack(features), axis=0).astype(np.float32)
         embedding /= max(float(np.linalg.norm(embedding)), 1e-8)
         np.save(person_dir / "embedding.npy", embedding)
+        (person_dir / "display_name.txt").write_text(name.strip(), encoding="utf-8")
         self.reload()
         return person_dir, len(features)
 

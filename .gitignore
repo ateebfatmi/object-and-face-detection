@@ -16,6 +16,7 @@ data/unknown_faces/*
 data/screenshots/*
 data/uploads/*
 data/processed/*
+data/attendance/*
 evaluation/dataset.yaml
 evaluation/*-results.json
 data/openimages_daily_objects/

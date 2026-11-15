@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.config import ROOT
+from src.security import DeploymentSettings, enforce_production_access
 
 
 favicon = ROOT / "assets" / "favicon.svg"
@@ -12,6 +13,9 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+deployment = DeploymentSettings.from_environment()
+enforce_production_access(deployment)
 
 navigation = st.navigation(
     {
@@ -25,6 +29,7 @@ navigation = st.navigation(
         ],
         "DATA & INSIGHTS": [
             st.Page("pages/4_Face_Registration.py", title="Face Registration", icon=":material/person_add:"),
+            st.Page("pages/5_Attendance.py", title="Attendance", icon=":material/how_to_reg:"),
             st.Page("pages/5_Analytics.py", title="Analytics", icon=":material/monitoring:"),
             st.Page("pages/6_Detection_History.py", title="Detection History", icon=":material/history:"),
         ],

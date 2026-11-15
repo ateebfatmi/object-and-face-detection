@@ -9,6 +9,33 @@
   --vg-accent:#d7a99e;
   --vg-accent-soft:#ead0c8;
   --vg-teal:#62b7b2;
+  --vg-scrollbar-thumb:#5f5954;
+  --vg-scrollbar-thumb-hover:#8b7e77;
+  --vg-scrollbar-track:#0b0b0a;
+}
+
+html, body, .stApp, .stApp * {
+  scrollbar-color:var(--vg-scrollbar-thumb) var(--vg-scrollbar-track);
+  scrollbar-width:auto;
+}
+
+::-webkit-scrollbar { width:12px; height:12px; }
+::-webkit-scrollbar-track { background:var(--vg-scrollbar-track); }
+::-webkit-scrollbar-thumb {
+  min-height:34px;
+  border:3px solid var(--vg-scrollbar-track);
+  border-radius:999px;
+  background:var(--vg-scrollbar-thumb);
+}
+::-webkit-scrollbar-thumb:hover { background:var(--vg-scrollbar-thumb-hover); }
+
+button:focus-visible,
+a:focus-visible,
+[role="tab"]:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline:3px solid rgba(98,183,178,.82) !important;
+  outline-offset:3px;
 }
 
 html, body, [class*="css"] {
@@ -323,4 +350,22 @@ iframe[title="streamlit_webrtc.component.webrtc_streamer"] { border-radius:22px;
   .vg-mini-nav { width:66px; padding-left:.35rem; padding-right:.35rem; }
   .vg-mini-link { width:46px; }
   body:has([data-testid="stExpandSidebarButton"]) [data-testid="stAppViewContainer"] { padding-left:66px; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  *, *::before, *::after {
+    scroll-behavior:auto !important;
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+  }
+}
+
+@media (forced-colors:active) {
+  html, body, .stApp, .stApp * { scrollbar-color:auto; }
+  button:focus-visible,
+  a:focus-visible,
+  [role="tab"]:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible { outline:2px solid CanvasText !important; }
 }

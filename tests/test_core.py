@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 import sys
 import tempfile
 import threading
 import types
 import unittest
 from pathlib import Path
+from datetime import timedelta
 from unittest.mock import patch
 
 import numpy as np
@@ -25,6 +27,8 @@ from src.object_detector import (
 )
 from src.performance import classification_report, summarize_benchmark
 from src.processor import TemporalObjectFilter
+from src.security import DeploymentSettings
+from src.database import utcnow
 from src.ui import compact_navigation
 from src.video_utils import Cooldown, decode_image, resize_for_inference
 from scripts.evaluate_object_detection import build_report
@@ -78,6 +82,88 @@ class CoreTests(unittest.TestCase):
         self.assertIn('class="vg-mini-link active"', markup)
         self.assertIn('href="/Project_Guide"', markup)
         self.assertEqual(markup.count('class="vg-mini-link active"'), 1)
+
+    def test_attendance_records_present_absent_and_prevents_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / "attendance.db")
+            first = database.add_person("Asha Rao", "CSE-001", None, folder, str(Path(folder) / "a.npy"))
+            database.add_person("Kabir Shah", "CSE-002", None, folder, str(Path(folder) / "b.npy"))
+            session_id = database.start_attendance("CSE A", "One by one")
+
+            self.assertTrue(database.mark_attendance_person(session_id, first.id, .76))
+            self.assertFalse(database.mark_attendance_person(session_id, first.id, .81))
+            database.finish_attendance(session_id)
+
+            records = database.attendance_records_frame(session_id)
+            self.assertEqual(dict(zip(records["person_identifier"], records["status"])), {
+                "CSE-001": "Present",
+                "CSE-002": "Absent",
+            })
+            session = database.attendance_session(session_id)
+            self.assertEqual((session.total_registered, session.total_present), (2, 1))
+
+    def test_reviewed_class_attendance_is_atomic_and_keeps_deleted_student_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / "attendance.db")
+            first = database.add_person("Asha Rao", "CSE-001", None, folder, str(Path(folder) / "a.npy"))
+            second = database.add_person("Asha Rao", "CSE-002", None, folder, str(Path(folder) / "b.npy"))
+            session_id = database.record_class_attendance(
+                "CSE A",
+                {first.id: .81, second.id: None},
+                unknown_faces=1,
+                evidence_path=str(Path(folder) / "class.jpg"),
+                recorded_by="teacher@example.edu",
+            )
+
+            database.delete_person(second.id)
+            records = database.attendance_records_frame(session_id)
+            self.assertEqual(set(records["person_identifier"]), {"CSE-001", "CSE-002"})
+            session = database.attendance_session(session_id)
+            self.assertEqual((session.state, session.total_present, session.unknown_faces), ("finalized", 2, 1))
+
+    def test_incomplete_attendance_can_be_reviewed_or_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / "attendance.db")
+            first = database.add_person("Asha Rao", "CSE-001", None, folder, str(Path(folder) / "a.npy"))
+            second = database.add_person("Kabir Shah", "CSE-002", None, folder, str(Path(folder) / "b.npy"))
+            session_id = database.start_attendance("CSE A", "One by one", recorded_by="teacher@example.edu")
+            database.mark_attendance_person(session_id, first.id, .77, "teacher@example.edu")
+            self.assertEqual([item.id for item in database.open_attendance_sessions()], [session_id])
+
+            database.finalize_attendance_review(session_id, {second.id}, "teacher@example.edu")
+            records = database.attendance_records_frame(session_id)
+            self.assertEqual(dict(zip(records["person_identifier"], records["status"])), {
+                "CSE-001": "Absent",
+                "CSE-002": "Present",
+            })
+            cancelled_id = database.start_attendance("CSE B", "One by one")
+            self.assertTrue(database.cancel_attendance(cancelled_id, "teacher@example.edu"))
+            self.assertFalse(database.cancel_attendance(cancelled_id, "teacher@example.edu"))
+
+    def test_explicit_retention_removes_only_expired_finalized_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            database = Database(Path(folder) / "attendance.db")
+            person = database.add_person("Asha Rao", "CSE-001", None, folder, str(Path(folder) / "a.npy"))
+            finalized = database.record_class_attendance("CSE A", {person.id: .8}, 0, str(Path(folder) / "old.jpg"))
+            open_id = database.start_attendance("CSE B", "One by one")
+            removed, paths = database.purge_expired_attendance(utcnow() + timedelta(seconds=1))
+            self.assertEqual((removed, paths), (1, [str(Path(folder) / "old.jpg")]))
+            self.assertIsNone(database.attendance_session(finalized))
+            self.assertIsNotNone(database.attendance_session(open_id))
+
+    def test_production_settings_fail_closed_without_allowlist_and_retention(self) -> None:
+        with patch.dict(os.environ, {"VISIONGUARD_ENV": "production"}, clear=True):
+            settings = DeploymentSettings.from_environment()
+            self.assertEqual(len(settings.configuration_errors()), 2)
+        with patch.dict(os.environ, {
+            "VISIONGUARD_ENV": "production",
+            "VISIONGUARD_ALLOWED_EMAILS": "Teacher@Example.edu, admin@example.edu",
+            "VISIONGUARD_ATTENDANCE_RETENTION_DAYS": "90",
+        }, clear=True):
+            settings = DeploymentSettings.from_environment()
+            self.assertEqual(settings.configuration_errors(), [])
+            self.assertEqual(settings.retention_days, 90)
+            self.assertIn("teacher@example.edu", settings.allowed_emails)
 
     def test_benchmark_summary(self) -> None:
         summary = summarize_benchmark([100, 200, 300])

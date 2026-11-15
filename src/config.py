@@ -10,6 +10,7 @@ UNKNOWN_FACES_DIR = DATA_DIR / "unknown_faces"
 SCREENSHOTS_DIR = DATA_DIR / "screenshots"
 UPLOADS_DIR = DATA_DIR / "uploads"
 PROCESSED_DIR = DATA_DIR / "processed"
+ATTENDANCE_DIR = DATA_DIR / "attendance"
 MODELS_DIR = ROOT / "models"
 DATABASE_DIR = ROOT / "database"
 DATABASE_PATH = DATABASE_DIR / "visionguard.db"
@@ -32,7 +33,7 @@ SFACE_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_recogniti
 def ensure_directories() -> None:
     for path in (
         KNOWN_FACES_DIR, UNKNOWN_FACES_DIR, SCREENSHOTS_DIR, UPLOADS_DIR,
-        PROCESSED_DIR, MODELS_DIR, DATABASE_DIR,
+        PROCESSED_DIR, ATTENDANCE_DIR, MODELS_DIR, DATABASE_DIR,
     ):
         path.mkdir(parents=True, exist_ok=True)
 

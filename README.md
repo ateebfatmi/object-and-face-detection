@@ -14,6 +14,8 @@ VisionGuard combines Ultralytics YOLO, ByteTrack, OpenCV YuNet/SFace, Streamlit,
 - Dedicated YuNet face detection independent of person boxes
 - Local SFace embeddings with conservative configurable matching
 - Multi-image face registration and cached embeddings
+- Separate attendance workflow for full-class photos and one-by-one student check-in
+- Attendance session history with present/absent rosters and CSV export
 - Unknown-face snapshots with cooldown protection
 - Image and uploaded-video processing with downloadable results
 - SQLite sessions and event-level detection history
@@ -70,6 +72,26 @@ streamlit run app.py
 
 Open `http://localhost:8501`. VisionGuard requires the selected YOLO weights to exist in `models/` and will never silently substitute another standard model. The expected files are `yolo11n.pt`, `yolo11s.pt`, and (for Extended mode) `yolov8s-worldv2.pt`. Extended mode also loads `daily_objects.pt` and the hard-negative-trained `key_objects.pt` when those local checkpoints are present. Diverse mode uses the official `yolo26s-objv1-150.pt` Objects365 checkpoint plus the same specialist passes. Obtain base checkpoints only from the official Ultralytics release mechanism. YuNet and SFace are downloaded from the official OpenCV Zoo if absent. All inference is local after setup.
 
+## Production deployment
+
+Development mode stays local and does not require sign-in. Production mode fails closed until authentication, an account allowlist, and an explicit attendance-retention period are configured.
+
+1. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and configure an OIDC provider. Use an HTTPS redirect URI ending in `/oauth2callback` and generate a strong random cookie secret.
+2. Set the deployment environment:
+
+```bash
+export VISIONGUARD_ENV=production
+export VISIONGUARD_ALLOWED_EMAILS="teacher@example.edu,admin@example.edu"
+export VISIONGUARD_ATTENDANCE_RETENTION_DAYS=90
+# Only for a named [auth.provider] configuration:
+export VISIONGUARD_AUTH_PROVIDER=provider
+```
+
+3. Put `database/` and `data/` on encrypted, access-controlled persistent storage. Back up the SQLite database and test restoration. Attendance past the configured retention period is removed automatically; in-progress sessions are preserved.
+4. Terminate TLS at a trusted reverse proxy, restrict filesystem permissions to the application account, and keep `.streamlit/secrets.toml` outside source control.
+
+SQLite WAL mode, foreign-key enforcement, a busy timeout, atomic full-class writes, and duplicate constraints support a reliable single-instance deployment. Use a managed database and shared protected object storage before running multiple application replicas.
+
 ## Using VisionGuard
 
 ### Register a face
@@ -88,6 +110,7 @@ The default cosine threshold is `0.45`. Raise it to reduce false acceptance; low
 - **Image Detection:** upload JPG/JPEG/PNG/WEBP and download the annotated JPEG.
 - **Video Detection:** upload MP4/MOV/AVI/MKV, select a frame stride, process, then preview/download the result.
 - **History:** filter by type, object, session, or identity and export CSV.
+- **Attendance:** analyze a group photo and review every suggested match before saving, or begin a recoverable session and check students in individually. Review the roster before finalizing.
 - **Analytics:** review KPIs and trends derived from SQLite.
 - **Model Performance:** benchmark the selected pipeline and evaluate labeled `actual`/`predicted` results.
 - **Project Guide:** use the built-in explanation and demo sequence during a college presentation.
@@ -103,6 +126,7 @@ visionguard-ai/
 │   ├── 2_Image_Detection.py
 │   ├── 3_Video_Detection.py
 │   ├── 4_Face_Registration.py
+│   ├── 5_Attendance.py
 │   ├── 5_Analytics.py
 │   ├── 6_Detection_History.py
 │   ├── 7_Model_Performance.py
@@ -139,6 +163,8 @@ visionguard-ai/
 - `registered_people`: profile metadata and local face/embedding locations
 - `detection_sessions`: source type, start/end time, and aggregate counts
 - `detections`: timestamp, class/type, confidence, detector source, track ID, identity, face similarity, and optional evidence path
+- `attendance_sessions`: class/section, capture mode, totals, timing, unknown count, and optional local evidence path
+- `attendance_records`: immutable name/ID snapshots, present/absent status, match confidence, and mark time
 
 SQLAlchemy creates the SQLite file and tables automatically. Queries are parameterized by the ORM. Biometric directories and the database are ignored by Git.
 
@@ -206,6 +232,8 @@ Manual acceptance testing should cover one/multiple/no faces, registered/unknown
 
 Face images and embeddings are sensitive biometric data. VisionGuard processes them locally, excludes them from Git, and provides deletion controls. Obtain informed consent, restrict filesystem access, define a retention policy, and check applicable privacy/biometric laws before deployment. Deleting a profile removes its saved images and embedding; History provides separate controls for unknown captures and logs.
 
+Attendance evidence is also stored locally under `data/attendance/`. Restrict access to both that folder and the SQLite database, tell students how recognition is used, and use the required review step to correct missed or incorrect matches. Production mode requires an operator-selected retention period and deletes expired finalized/cancelled sessions and evidence; it never expires an active session.
+
 ## Limitations
 
 - This is not a certified identity, security, or access-control system.
@@ -214,10 +242,11 @@ Face images and embeddings are sensitive biometric data. VisionGuard processes t
 - A track ID may change after prolonged occlusion or leaving the frame.
 - MP4 output relies on codecs available in the local OpenCV build.
 - Live event persistence is intentionally conservative; image/video sessions provide full logging.
+- The included SQLite deployment target is single-instance. Horizontal scaling requires a shared transactional database, shared protected evidence storage, and server-side authorization at that boundary.
 
 ## Future roadmap
 
-The modular processor and database boundaries support attendance workflows, CCTV/multi-camera input, restricted-area and PPE rules, vehicle/plate detection, alert adapters (email/Telegram), cloud databases, retention policies, background job workers, and role-based access without rewriting model code.
+The modular processor and database boundaries support CCTV/multi-camera input, restricted-area and PPE rules, vehicle/plate detection, alert adapters (email/Telegram), managed databases, background job workers, and institution-specific roles without rewriting model code.
 
 ## Screenshots
 

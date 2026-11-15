@@ -10,6 +10,8 @@ from .face_detector import FaceDetector
 from .face_recognizer import FaceRecognizer
 from .object_detector import ObjectDetector
 from .processor import VisionProcessor
+from .retention import apply_attendance_retention
+from .security import DeploymentSettings, enforce_production_access, show_identity_controls
 
 
 OBJECT_DETECTOR_REVISION = "supervised-key-specialist-v14"
@@ -24,6 +26,7 @@ COMPACT_NAVIGATION = (
     )),
     ("DATA", (
         ("Face Registration", "/Face_Registration", "person_add"),
+        ("Attendance", "/Attendance", "how_to_reg"),
         ("Analytics", "/Analytics", "monitoring"),
         ("Detection History", "/Detection_History", "history"),
     )),
@@ -51,12 +54,17 @@ def compact_navigation(active_title: str) -> str:
 def setup_page(title: str, icon: str = "🛡️") -> None:
     favicon = ROOT / "assets" / "favicon.svg"
     st.set_page_config(page_title=f"{title} · VisionGuard AI", page_icon=str(favicon))
+    deployment = DeploymentSettings.from_environment()
+    enforce_production_access(deployment)
+    if deployment.production and deployment.retention_days is not None:
+        apply_attendance_retention(get_database(), deployment.retention_days)
     css = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
     st.html(compact_navigation(title))
     logo = ROOT / "assets" / "logo.svg"
     if logo.exists():
         st.logo(str(logo), size="large")
+    show_identity_controls()
 
 
 @st.cache_resource

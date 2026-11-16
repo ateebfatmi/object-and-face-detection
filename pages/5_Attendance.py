@@ -8,18 +8,16 @@ import pandas as pd
 import streamlit as st
 
 from src.attendance import analyze_attendance, validate_face_profiles
-from src.attendance_config import ATTENDANCE_MODES, FULL_CLASS_MODE, INDIVIDUAL_MODE, AttendanceSettings
+from src.attendance_config import FULL_CLASS_MODE, INDIVIDUAL_MODE, AttendanceSettings
 from src.config import ATTENDANCE_DIR, ensure_directories
 from src.security import current_actor
-from src.ui import get_database, get_face_detector, get_face_recognizer, hero, metric_cards, setup_page
+from src.ui import get_database, get_face_detector, get_face_recognizer, setup_page
 from src.video_utils import decode_image
 
 
 setup_page("Attendance", "✅")
-hero(
-    "Class Attendance",
-    "Record a full class from one photo, or check students in one by one using their registered faces.",
-)
+st.title("Attendance")
+st.caption("Record a class from one photo or check in students individually.")
 
 database = get_database()
 settings = AttendanceSettings.from_environment()
@@ -28,43 +26,39 @@ profile_issues = validate_face_profiles(people)
 attendance_ready = not profile_issues
 
 with st.sidebar:
-    st.subheader("Attendance settings")
-    threshold = st.slider(
-        "Face match threshold",
-        min_value=settings.threshold_min,
-        max_value=settings.threshold_max,
-        value=settings.threshold_default,
-        step=settings.threshold_step,
-        help="Raise this to reduce false matches. Lower it only after testing your classroom camera.",
-    )
-    st.caption("Photos and face embeddings stay on this device.")
+    with st.expander("Recognition settings", expanded=False):
+        threshold = st.slider(
+            "Face match threshold",
+            min_value=settings.threshold_min,
+            max_value=settings.threshold_max,
+            value=settings.threshold_default,
+            step=settings.threshold_step,
+            help="Raise this to reduce false matches. Lower it only after testing your classroom camera.",
+        )
+        st.caption("Face data stays on this device.")
 
 if not people:
     st.warning("Register every student's face before recording attendance.")
     st.page_link("pages/4_Face_Registration.py", label="Open Face Registration", icon="👤")
     st.stop()
 
-metric_cards([
-    ("Roster students", len(people), "◎"),
-    ("Face-ready", len(people) - len(profile_issues), "✓"),
-    ("Capture modes", len(ATTENDANCE_MODES), "◫"),
-    ("Storage", database.engine.dialect.name.upper(), "⌂"),
-])
+ready_count = len(people) - len(profile_issues)
 
 if profile_issues:
     issue_count = len(profile_issues)
     profile_label = "profile" if issue_count == 1 else "profiles"
-    verb = "has" if issue_count == 1 else "have"
-    st.error(f"Attendance capture is paused: {issue_count} student {profile_label} {verb} missing or invalid face data.")
-    st.dataframe(
-        pd.DataFrame([
-            {"Student": issue.name, "Student ID": issue.identifier, "Problem": issue.reason}
-            for issue in profile_issues
-        ]),
-        width="stretch",
-        hide_index=True,
+    verb = "is" if issue_count == 1 else "are"
+    st.warning(
+        f"{ready_count} of {len(people)} student profiles are ready. "
+        f"Attendance is paused until {issue_count} face {profile_label} {verb} repaired."
     )
-    st.page_link("pages/4_Face_Registration.py", label="Repair profiles in Face Registration", icon="👤")
+    with st.expander(f"View {profile_label} requiring attention"):
+        for issue in profile_issues:
+            st.write(f"**{issue.name}** · {issue.identifier}")
+            st.caption(issue.reason)
+        st.page_link("pages/4_Face_Registration.py", label="Open Face Registration", icon="👤")
+else:
+    st.caption(f"All {len(people)} student profiles are ready")
 
 group_tab, individual_tab, history_tab = st.tabs([
     FULL_CLASS_MODE.label,
@@ -93,11 +87,10 @@ def show_last_session(session_id: int) -> None:
         return
     absent = max(0, session.total_registered - session.total_present)
     st.success(f"Attendance recorded for {session.class_name}.")
-    metric_cards([
-        ("Present", session.total_present, "✓"),
-        ("Absent", absent, "—"),
-        ("Unknown faces", session.unknown_faces, "?"),
-    ])
+    present_col, absent_col, unknown_col = st.columns(3)
+    present_col.metric("Present", session.total_present)
+    absent_col.metric("Absent", absent)
+    unknown_col.metric("Unknown faces", session.unknown_faces)
     records = database.attendance_records_frame(session_id)
     st.dataframe(
         records[["person_name", "person_identifier", "status", "confidence"]],

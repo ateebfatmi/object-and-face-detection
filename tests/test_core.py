@@ -18,6 +18,7 @@ from src.attendance_config import ATTENDANCE_MODES, AttendanceSettings
 from src.database import Database
 from src.face_detector import FaceDetector
 from src.face_recognizer import FaceRecognizer, slugify
+from src.navigation import NAVIGATION_SECTIONS
 from src.object_detector import (
     ACCESSORY_PROMPTS,
     BACKPACK_VERIFY_PROMPTS,
@@ -31,7 +32,7 @@ from src.performance import classification_report, summarize_benchmark
 from src.processor import TemporalObjectFilter
 from src.security import DeploymentSettings
 from src.database import utcnow
-from src.ui import compact_navigation
+from src.ui import compact_navigation, expanded_navigation
 from src.video_utils import Cooldown, decode_image, resize_for_inference
 from scripts.evaluate_object_detection import build_report
 
@@ -83,7 +84,21 @@ class CoreTests(unittest.TestCase):
         markup = compact_navigation("Project Guide")
         self.assertIn('class="vg-mini-link active"', markup)
         self.assertIn('href="/Project_Guide"', markup)
+        self.assertIn('aria-current="page"', markup)
         self.assertEqual(markup.count('class="vg-mini-link active"'), 1)
+
+    def test_navigation_catalog_has_unique_routes_and_titles(self) -> None:
+        items = [item for _, section_items in NAVIGATION_SECTIONS for item in section_items]
+        self.assertEqual(len({item.title for item in items}), len(items))
+        self.assertEqual(len({item.href for item in items}), len(items))
+        self.assertEqual(sum(item.default for item in items), 1)
+
+    def test_expanded_navigation_has_group_labels_and_current_route(self) -> None:
+        markup = expanded_navigation("Image Detection")
+        self.assertIn("People &amp; reports", markup)
+        self.assertIn('aria-label="Primary navigation"', markup)
+        self.assertIn('class="vg-side-link active"', markup)
+        self.assertEqual(markup.count('aria-current="page"'), 1)
 
     def test_attendance_records_present_absent_and_prevents_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

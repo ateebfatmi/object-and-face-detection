@@ -15,6 +15,8 @@ colors:
   scrollbar-thumb: "#5F5954"
   scrollbar-thumb-hover: "#8B7E77"
   scrollbar-track: "#0B0B0A"
+  navigation-active-background: "rgba(215,169,158,0.11)"
+  navigation-active-edge: "#D7A99E"
 rounded:
   DEFAULT: "0.8125rem"
   card: "1.3125rem"
@@ -87,7 +89,7 @@ Use one rose-accented primary action per decision area. Secondary actions use th
 
 ### Navigation and data display
 
-The sidebar is canonical. The compact navigation mirrors every route. Rosters use Streamlit dataframes with explicit column labels, stable widths, and downloadable CSV where useful.
+The sidebar is canonical. The expanded navigation uses full-width grouped links, readable labels, quiet Material icons, and restrained section headings. The current destination uses a warm tonal fill and a slim rose edge; the collapsed rail keeps the same route order with accessible names and tooltips. Both presentations are generated from one navigation catalog. Rosters use Streamlit dataframes with explicit column labels, stable widths, and downloadable CSV where useful.
 
 ### Forms and overlays
 
@@ -99,7 +101,7 @@ Material Symbols Rounded is canonical for navigation. Icons supplement readable 
 
 ### Motion
 
-Hover movement is limited to 1–3px over roughly 200ms. Functional state changes are immediate. Reduced-motion users receive no decorative transforms.
+Hover movement is limited to 1–3px over roughly 200ms. Route selection does not use a scale, pulse, or delayed animation. Functional state changes are immediate. Reduced-motion users receive no decorative transforms.
 
 ### Content and data visualization
 

@@ -50,6 +50,7 @@
 
 - Every route sets a unique title through `setup_page`.
 - Sidebar navigation is canonical; compact icon navigation mirrors it when collapsed.
+- Expanded and compact navigation are generated from one shared route catalog. The current route is exposed with `aria-current="page"`, and every icon-only compact destination keeps an accessible name and tooltip.
 - Camera/upload pairs use responsive columns and fall back to natural document flow.
 - Focused content must not be obscured by sticky UI.
 

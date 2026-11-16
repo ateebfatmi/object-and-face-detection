@@ -9,6 +9,7 @@ import pandas as pd
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint, create_engine, delete, event, func, select, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
+from .attendance_config import FULL_CLASS_MODE
 from .config import DATABASE_PATH, ensure_directories
 
 
@@ -373,7 +374,7 @@ class Database:
             selected = {person_id: score for person_id, score in present.items() if person_id in valid_ids}
             session = AttendanceSession(
                 class_name=class_name,
-                capture_mode="Full class photo",
+                capture_mode=FULL_CLASS_MODE.database_value,
                 started_at=utcnow(),
                 ended_at=utcnow(),
                 total_registered=len(people),
@@ -507,3 +508,7 @@ class Database:
             self.engine,
             params={"limit": max(1, min(int(limit), 500))},
         )
+
+    def attendance_session_count(self) -> int:
+        with self.session() as db:
+            return int(db.scalar(select(func.count(AttendanceSession.id))) or 0)

@@ -87,6 +87,17 @@ export VISIONGUARD_ATTENDANCE_RETENTION_DAYS=90
 export VISIONGUARD_AUTH_PROVIDER=provider
 ```
 
+Attendance page behavior can be adjusted without editing page code:
+
+```bash
+export VISIONGUARD_FACE_MATCH_THRESHOLD=0.45
+export VISIONGUARD_ATTENDANCE_HISTORY_LIMIT=100
+export VISIONGUARD_ATTENDANCE_IMAGE_TYPES="jpg,jpeg,png,webp"
+export VISIONGUARD_ATTENDANCE_EVIDENCE_TYPE=jpg
+```
+
+The history limit is bounded to 1–500 rows. The page derives roster readiness, capture-mode count, storage backend, and recorded-session totals from the live runtime and database.
+
 3. Put `database/` and `data/` on encrypted, access-controlled persistent storage. Back up the SQLite database and test restoration. Attendance past the configured retention period is removed automatically; in-progress sessions are preserved.
 4. Terminate TLS at a trusted reverse proxy, restrict filesystem permissions to the application account, and keep `.streamlit/secrets.toml` outside source control.
 

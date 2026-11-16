@@ -14,6 +14,7 @@ from unittest.mock import patch
 import numpy as np
 
 from src.attendance import validate_face_profiles
+from src.attendance_config import ATTENDANCE_MODES, AttendanceSettings
 from src.database import Database
 from src.face_detector import FaceDetector
 from src.face_recognizer import FaceRecognizer, slugify
@@ -102,6 +103,21 @@ class CoreTests(unittest.TestCase):
             })
             session = database.attendance_session(session_id)
             self.assertEqual((session.total_registered, session.total_present), (2, 1))
+            self.assertEqual(database.attendance_session_count(), 1)
+
+    def test_attendance_settings_are_operator_configurable_and_bounded(self) -> None:
+        with patch.dict(os.environ, {
+            "VISIONGUARD_FACE_MATCH_THRESHOLD": "0.62",
+            "VISIONGUARD_ATTENDANCE_HISTORY_LIMIT": "900",
+            "VISIONGUARD_ATTENDANCE_IMAGE_TYPES": "png,jpg,png",
+            "VISIONGUARD_ATTENDANCE_EVIDENCE_TYPE": "png",
+        }, clear=True):
+            settings = AttendanceSettings.from_environment()
+        self.assertEqual(settings.threshold_default, 0.62)
+        self.assertEqual(settings.history_limit, 500)
+        self.assertEqual(settings.image_extensions, ("png", "jpg"))
+        self.assertEqual(settings.evidence_extension, "png")
+        self.assertEqual(len(ATTENDANCE_MODES), 2)
 
     def test_reviewed_class_attendance_is_atomic_and_keeps_deleted_student_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from src.attendance import analyze_attendance, validate_face_profiles
+from src.attendance_config import ATTENDANCE_MODES, FULL_CLASS_MODE, INDIVIDUAL_MODE, AttendanceSettings
 from src.config import ATTENDANCE_DIR, ensure_directories
 from src.security import current_actor
 from src.ui import get_database, get_face_detector, get_face_recognizer, hero, metric_cards, setup_page
@@ -21,6 +22,7 @@ hero(
 )
 
 database = get_database()
+settings = AttendanceSettings.from_environment()
 people = database.people()
 profile_issues = validate_face_profiles(people)
 attendance_ready = not profile_issues
@@ -29,10 +31,10 @@ with st.sidebar:
     st.subheader("Attendance settings")
     threshold = st.slider(
         "Face match threshold",
-        min_value=0.30,
-        max_value=0.80,
-        value=0.45,
-        step=0.01,
+        min_value=settings.threshold_min,
+        max_value=settings.threshold_max,
+        value=settings.threshold_default,
+        step=settings.threshold_step,
         help="Raise this to reduce false matches. Lower it only after testing your classroom camera.",
     )
     st.caption("Photos and face embeddings stay on this device.")
@@ -45,23 +47,30 @@ if not people:
 metric_cards([
     ("Roster students", len(people), "◎"),
     ("Face-ready", len(people) - len(profile_issues), "✓"),
-    ("Capture modes", 2, "◫"),
-    ("Storage", "Local", "⌂"),
+    ("Capture modes", len(ATTENDANCE_MODES), "◫"),
+    ("Storage", database.engine.dialect.name.upper(), "⌂"),
 ])
 
 if profile_issues:
-    st.error(f"Attendance capture is paused: {len(profile_issues)} student profile(s) have missing or invalid face data.")
+    issue_count = len(profile_issues)
+    profile_label = "profile" if issue_count == 1 else "profiles"
+    verb = "has" if issue_count == 1 else "have"
+    st.error(f"Attendance capture is paused: {issue_count} student {profile_label} {verb} missing or invalid face data.")
     st.dataframe(
         pd.DataFrame([
             {"Student": issue.name, "Student ID": issue.identifier, "Problem": issue.reason}
             for issue in profile_issues
         ]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     st.page_link("pages/4_Face_Registration.py", label="Repair profiles in Face Registration", icon="👤")
 
-group_tab, individual_tab, history_tab = st.tabs(["Full class photo", "One by one", "Attendance history"])
+group_tab, individual_tab, history_tab = st.tabs([
+    FULL_CLASS_MODE.label,
+    INDIVIDUAL_MODE.label,
+    "Attendance history",
+])
 
 
 def read_capture(upload, camera):
@@ -72,7 +81,7 @@ def read_capture(upload, camera):
 def save_evidence(image, prefix: str) -> str:
     ensure_directories()
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
-    path = ATTENDANCE_DIR / f"{prefix}_{stamp}.jpg"
+    path = ATTENDANCE_DIR / f"{prefix}_{stamp}.{settings.evidence_extension}"
     if not cv2.imwrite(str(path), image):
         raise RuntimeError("The attendance evidence image could not be saved.")
     return str(path)
@@ -92,7 +101,7 @@ def show_last_session(session_id: int) -> None:
     records = database.attendance_records_frame(session_id)
     st.dataframe(
         records[["person_name", "person_identifier", "status", "confidence"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "person_name": "Student",
@@ -108,9 +117,9 @@ def confirm_session_cancellation(session_id: int, class_name: str) -> None:
     st.write(f"Cancel the unfinished attendance session for **{class_name}**?")
     st.warning("Captured check-ins in this unfinished session will remain in the audit history, but the session cannot be resumed.")
     keep, cancel = st.columns(2)
-    if keep.button("Keep session", use_container_width=True):
+    if keep.button("Keep session", width="stretch"):
         st.rerun()
-    if cancel.button("Cancel session", type="primary", use_container_width=True):
+    if cancel.button("Cancel session", type="primary", width="stretch"):
         database.cancel_attendance(session_id, current_actor())
         if st.session_state.get("individual_attendance_session_id") == session_id:
             st.session_state.pop("individual_attendance_session_id", None)
@@ -126,7 +135,7 @@ with group_tab:
     left, right = st.columns(2)
     group_upload = left.file_uploader(
         "Upload a class photo",
-        type=["jpg", "jpeg", "png", "webp"],
+        type=list(settings.image_extensions),
         key=f"group_attendance_upload_{group_capture_number}",
     )
     group_camera = right.camera_input("Or take the class photo", key=f"group_attendance_camera_{group_capture_number}")
@@ -169,7 +178,7 @@ with group_tab:
         st.image(
             cv2.cvtColor(pending["annotated"], cv2.COLOR_BGR2RGB),
             caption="Review result — teal boxes are suggested matches; red boxes are unknown faces.",
-            use_container_width=True,
+            width="stretch",
         )
         scores = pending["scores"]
         review_rows = pd.DataFrame([
@@ -185,7 +194,7 @@ with group_tab:
         st.write("Review attendance")
         reviewed = st.data_editor(
             review_rows,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             disabled=["person_id", "Student", "Student ID", "Match"],
             column_config={
@@ -196,7 +205,7 @@ with group_tab:
             key=f"group_review_{group_capture_number}",
         )
         save_col, discard_col = st.columns(2)
-        if save_col.button("Save reviewed attendance", type="primary", use_container_width=True):
+        if save_col.button("Save reviewed attendance", type="primary", width="stretch"):
             selected: dict[int, float | None] = {}
             for row in reviewed.itertuples(index=False):
                 if bool(row.Present):
@@ -220,7 +229,7 @@ with group_tab:
                 if evidence_path:
                     Path(evidence_path).unlink(missing_ok=True)
                 st.error(f"Attendance could not be saved: {exc}")
-        if discard_col.button("Discard analysis", use_container_width=True):
+        if discard_col.button("Discard analysis", width="stretch"):
             st.session_state.pop("group_attendance_analysis", None)
             st.session_state.group_capture_number = group_capture_number + 1
             st.rerun()
@@ -240,18 +249,18 @@ with individual_tab:
             session_labels = {
                 f"{item.class_name} · started {item.started_at:%Y-%m-%d %H:%M}": item
                 for item in recoverable
-                if item.capture_mode == "One by one"
+                if item.capture_mode == INDIVIDUAL_MODE.database_value
             }
             if session_labels:
                 selected_label = st.selectbox("Unfinished session", list(session_labels))
                 selected_session = session_labels[selected_label]
                 resume_col, cancel_col = st.columns(2)
-                if resume_col.button("Resume session", use_container_width=True):
+                if resume_col.button("Resume session", width="stretch"):
                     st.session_state.individual_attendance_session_id = selected_session.id
                     st.session_state.individual_attendance_class = selected_session.class_name
                     st.session_state.individual_capture_number = 0
                     st.rerun()
-                if cancel_col.button("Cancel unfinished session", use_container_width=True):
+                if cancel_col.button("Cancel unfinished session", width="stretch"):
                     confirm_session_cancellation(selected_session.id, selected_session.class_name)
 
     individual_class = st.text_input(
@@ -274,7 +283,7 @@ with individual_tab:
             else:
                 active_id = database.start_attendance(
                     individual_class.strip(),
-                    "One by one",
+                    INDIVIDUAL_MODE.database_value,
                     recorded_by=current_actor(),
                 )
                 st.session_state.pop("individual_last_mark", None)
@@ -288,7 +297,7 @@ with individual_tab:
         capture_number = int(st.session_state.get("individual_capture_number", 0))
         one_upload = st.file_uploader(
             "Upload one student's photo",
-            type=["jpg", "jpeg", "png", "webp"],
+            type=list(settings.image_extensions),
             key=f"individual_upload_{capture_number}",
         )
         one_camera = st.camera_input(
@@ -296,7 +305,7 @@ with individual_tab:
             key=f"individual_camera_{capture_number}",
         )
         action_col, finish_col = st.columns(2)
-        if action_col.button("Mark student present", type="primary", use_container_width=True):
+        if action_col.button("Mark student present", type="primary", width="stretch"):
             image = read_capture(one_upload, one_camera)
             if image is None:
                 st.error("Take or upload one student's photo first.")
@@ -329,7 +338,7 @@ with individual_tab:
                             st.warning(f"{match.name} is already marked present in this session.")
                 except Exception as exc:
                     st.error(f"The student could not be checked in: {exc}")
-        if finish_col.button("Cancel session", use_container_width=True):
+        if finish_col.button("Cancel session", width="stretch"):
             confirm_session_cancellation(int(active_id), session.class_name if session else active_class)
 
         if st.session_state.get("individual_last_mark"):
@@ -350,7 +359,7 @@ with individual_tab:
         ])
         reviewed_roster = st.data_editor(
             roster,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             disabled=["person_id", "Student", "Student ID", "Match"],
             column_config={
@@ -360,7 +369,7 @@ with individual_tab:
             },
             key=f"individual_review_{active_id}_{capture_number}",
         )
-        if st.button("Finalize reviewed attendance", type="primary", use_container_width=True):
+        if st.button("Finalize reviewed attendance", type="primary", width="stretch"):
             selected_ids = {
                 int(row.person_id)
                 for row in reviewed_roster.itertuples(index=False)
@@ -379,14 +388,19 @@ with individual_tab:
 
 with history_tab:
     st.subheader("Recorded sessions")
-    st.caption("Showing the 100 most recent sessions. Select one session to inspect or export its roster.")
-    sessions = database.attendance_sessions_frame()
+    total_sessions = database.attendance_session_count()
+    sessions = database.attendance_sessions_frame(settings.history_limit)
+    shown_sessions = len(sessions)
+    st.caption(
+        f"Showing {shown_sessions} of {total_sessions} recorded session{'s' if total_sessions != 1 else ''}. "
+        "Select one session to inspect or export its roster."
+    )
     if sessions.empty:
         st.info("No attendance sessions have been recorded yet.")
     else:
         st.dataframe(
             sessions[["id", "class_name", "capture_mode", "state", "started_at", "total_registered", "total_present", "unknown_faces"]],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "id": "Session",
@@ -409,7 +423,7 @@ with history_tab:
         if not records.empty:
             st.dataframe(
                 records[["person_name", "person_identifier", "status", "confidence", "marked_at"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "person_name": "Student",

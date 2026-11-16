@@ -18,6 +18,14 @@ st.set_page_config(
 deployment = DeploymentSettings.from_environment()
 enforce_production_access(deployment)
 
+# Render the shared shell before the selected page. Navigation remains on
+# Streamlit's internal router, avoiding full-document reloads and late redraws.
+css = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
+st.markdown('<style data-visionguard-style="navigation-shell-v2">' + css + "</style>", unsafe_allow_html=True)
+logo = ROOT / "assets" / "logo.svg"
+if logo.exists():
+    st.logo(str(logo), size="large")
+
 navigation = st.navigation(
     {
         section: [

@@ -89,7 +89,7 @@ Use one rose-accented primary action per decision area. Secondary actions use th
 
 ### Navigation and data display
 
-The sidebar is canonical. The expanded navigation uses full-width grouped links, readable labels, quiet Material icons, and restrained section headings. The current destination uses a warm tonal fill and a slim rose edge; the collapsed rail keeps the same route order with accessible names and tooltips. Both presentations are generated from one navigation catalog. Rosters use Streamlit dataframes with explicit column labels, stable widths, and downloadable CSV where useful.
+The sidebar is canonical. Streamlit's internal router renders full-width grouped links from one navigation catalog, with readable labels, quiet Material icons, and restrained section headings. The current destination uses a warm tonal fill and a slim rose edge. The native collapse control preserves router state without a duplicate navigation layer. Rosters use Streamlit dataframes with explicit column labels, stable widths, and downloadable CSV where useful.
 
 ### Forms and overlays
 

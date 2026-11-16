@@ -49,8 +49,8 @@
 ## Navigation and responsive behavior
 
 - Every route sets a unique title through `setup_page`.
-- Sidebar navigation is canonical; compact icon navigation mirrors it when collapsed.
-- Expanded and compact navigation are generated from one shared route catalog. The current route is exposed with `aria-current="page"`, and every icon-only compact destination keeps an accessible name and tooltip.
+- Sidebar navigation is canonical and is rendered by Streamlit's internal router before page content executes.
+- All destinations are generated from one shared route catalog. The current route is exposed with `aria-current="page"`; collapsing the sidebar uses Streamlit's native control and must not create a second navigation layer or trigger a full-document reload.
 - Camera/upload pairs use responsive columns and fall back to natural document flow.
 - Focused content must not be obscured by sticky UI.
 
